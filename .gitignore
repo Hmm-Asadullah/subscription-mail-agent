@@ -1,0 +1,36 @@
+# Credentials and tokens - never commit these
+credentials/
+client_secret.json
+token.json
+.env
+
+# Generated output data
+subscriptions.csv
+subscriptions.json
+*.csv
+*.json
+!package.json
+!package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
