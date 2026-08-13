@@ -1,0 +1,18 @@
+From: Netflix <billing@netflix.com>
+To: asad@example.com
+Subject: Your Netflix payment confirmation
+Date: Sat, 01 Aug 2026 09:12:00 +0000
+Content-Type: text/plain; charset="UTF-8"
+
+Hi Asad,
+
+This is your payment confirmation for Netflix.
+
+Plan: Standard with ads
+Amount charged: $15.49
+Billing date: August 1, 2026
+Next billing date: September 1, 2026
+
+Thanks for being a Netflix member.
+
+Netflix Billing Team
