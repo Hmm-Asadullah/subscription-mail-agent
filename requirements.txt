@@ -7,6 +7,7 @@ beautifulsoup4
 tenacity
 python-dotenv
 flask
+werkzeug
 cryptography
 gunicorn
 streamlit

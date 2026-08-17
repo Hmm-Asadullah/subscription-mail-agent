@@ -19,6 +19,7 @@ import json
 
 from dotenv import load_dotenv
 from flask import Flask, redirect, request, session, render_template, send_file, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -79,6 +80,14 @@ TEMPLATES_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-only-change-me")
+
+# Railway (and most hosts) terminate HTTPS at their edge and forward
+# requests to the container over plain HTTP internally. Without this,
+# Flask sees every request as http://, which makes oauthlib incorrectly
+# reject the OAuth callback as insecure even though the real traffic
+# was HTTPS. ProxyFix tells Flask to trust the X-Forwarded-Proto header
+# Railway sets, so request.url correctly reports https://.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # Key used to encrypt the saved token at rest. Generate once with
 # Fernet.generate_key() and store it as an environment variable —
