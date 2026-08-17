@@ -17,6 +17,7 @@ see the deployment notes below the code.
 import os
 import json
 
+from dotenv import load_dotenv
 from flask import Flask, redirect, request, session, render_template, send_file, url_for
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
@@ -27,19 +28,54 @@ from pipeline import run_pipeline
 from export import export_csv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 CLIENT_SECRET_PATH = os.path.join(BASE_DIR, "credentials", "client_secret_web.json")
 TOKEN_STORE_PATH = os.path.join(BASE_DIR, "credentials", "client_token.enc")
 OUTPUT_PATH = os.path.join(BASE_DIR, "output", "subscriptions.csv")
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
+
+def get_client_config() -> dict:
+    """
+    Loads the OAuth client config either from the GOOGLE_CLIENT_SECRET_JSON
+    environment variable (used in production, e.g. Railway, where secret
+    files can't be committed to the repo) or from the local
+    client_secret_web.json file (used for local development).
+    """
+    raw = os.environ.get("GOOGLE_CLIENT_SECRET_JSON")
+    if raw:
+        return json.loads(raw)
+
+    if os.path.exists(CLIENT_SECRET_PATH):
+        with open(CLIENT_SECRET_PATH) as f:
+            return json.load(f)
+
+    raise RuntimeError(
+        "No OAuth client config found. Set GOOGLE_CLIENT_SECRET_JSON (production) "
+        "or place client_secret_web.json in credentials/ (local dev)."
+    )
+
+
+CLIENT_CONFIG = get_client_config()
+
 # Must exactly match an Authorized redirect URI configured in Google Cloud
 # Console for this OAuth client. Use your real domain in production.
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:5000/oauth2callback")
 
+# oauthlib refuses plain HTTP by default, even for localhost. Google itself
+# allows http://localhost as a testing exception, but the library doesn't
+# know that unless told explicitly. Only enable this bypass when the
+# redirect URI is actually localhost — never in production, where the
+# redirect URI will be a real https:// address and this line has no effect.
+if REDIRECT_URI.startswith("http://localhost"):
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
 # Secret key used to sign the Flask session cookie — set a real random
 # value via environment variable in production, never hardcode it.
-TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+# dashboard.html lives directly in src/, alongside this file — not in a
+# separate templates/ folder.
+TEMPLATES_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-only-change-me")
@@ -94,8 +130,9 @@ def index():
 
 @app.route("/connect")
 def connect():
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRET_PATH, scopes=SCOPES, redirect_uri=REDIRECT_URI
+    flow = Flow.from_client_config(
+        CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI,
+        autogenerate_code_verifier=True,
     )
     auth_url, state = flow.authorization_url(
         access_type="offline",       # needed to receive a refresh token
@@ -103,16 +140,18 @@ def connect():
         prompt="consent",            # forces refresh_token on every fresh connect
     )
     session["oauth_state"] = state
+    session["code_verifier"] = flow.code_verifier
     return redirect(auth_url)
 
 
 @app.route("/oauth2callback")
 def oauth2callback():
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRET_PATH,
+    flow = Flow.from_client_config(
+        CLIENT_CONFIG,
         scopes=SCOPES,
         redirect_uri=REDIRECT_URI,
         state=session.get("oauth_state"),
+        code_verifier=session.get("code_verifier"),
     )
     flow.fetch_token(authorization_response=request.url)
     save_token(flow.credentials)

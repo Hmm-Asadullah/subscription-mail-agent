@@ -1,0 +1,1 @@
+web: gunicorn --chdir src web_app:app --bind 0.0.0.0:$PORT
