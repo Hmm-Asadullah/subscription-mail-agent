@@ -10,6 +10,8 @@
         .btn:hover { background: #1d4ed8; }
         .btn-secondary { background: #16a34a; }
         .btn-secondary:hover { background: #15803d; }
+        .btn-outline { background: transparent; color: #6b7280; border: 1px solid #d1d5db; }
+        .btn-outline:hover { background: #f3f4f6; }
         table { width: 100%; border-collapse: collapse; margin-top: 24px; }
         th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; }
         th { background: #f9fafb; }
@@ -17,6 +19,13 @@
         .status-canceled { color: #dc2626; font-weight: 600; }
         .status-trial { color: #d97706; font-weight: 600; }
         .empty { color: #6b7280; margin-top: 20px; }
+        .connected-row { display: flex; align-items: center; justify-content: space-between; }
+        .actions { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+        .scan-controls { margin-top: 16px; }
+        .date-range { display: flex; gap: 20px; align-items: flex-end; }
+        .date-range label { display: flex; flex-direction: column; font-size: 0.85rem; color: #374151; gap: 4px; }
+        .date-range input[type="date"] { padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9rem; }
+        .hint { font-size: 0.8rem; color: #9ca3af; margin: 8px 0 0; }
     </style>
 </head>
 <body>
@@ -26,13 +35,37 @@
         <p>Connect your Gmail account to get started. Your inbox is only read, never modified.</p>
         <a class="btn" href="{{ url_for('connect') }}">Connect Gmail</a>
     {% else %}
-        <p>Gmail connected.</p>
-        <form action="{{ url_for('run_scan') }}" method="post" style="display:inline;">
-            <button class="btn" type="submit">Run scan</button>
-        </form>
-        {% if rows %}
-            <a class="btn btn-secondary" href="{{ url_for('download') }}">Download CSV</a>
-        {% endif %}
+        <div class="connected-row">
+            <p>Gmail connected.</p>
+            <form action="{{ url_for('disconnect') }}" method="post">
+                <button class="btn btn-outline" type="submit"
+                        onclick="return confirm('Disconnect this Gmail account? The next person to use this link will need to connect their own account.');">
+                    Disconnect
+                </button>
+            </form>
+        </div>
+
+        <div class="scan-controls">
+            <form action="{{ url_for('run_scan') }}" method="post">
+                <div class="date-range">
+                    <label>
+                        From
+                        <input type="date" name="start_date" value="{{ start_date or '' }}">
+                    </label>
+                    <label>
+                        To
+                        <input type="date" name="end_date" value="{{ end_date or '' }}">
+                    </label>
+                </div>
+                <p class="hint">Leave both blank to scan your entire mailbox.</p>
+                <div class="actions">
+                    <button class="btn" type="submit">Run scan</button>
+                    {% if rows %}
+                        <a class="btn btn-secondary" href="{{ url_for('download') }}">Download CSV</a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
 
         {% if rows %}
             <table>

@@ -134,7 +134,7 @@ def get_valid_credentials():
 def index():
     creds = get_valid_credentials()
     connected = creds is not None
-    return render_template("dashboard.html", connected=connected, rows=None)
+    return render_template("dashboard.html", connected=connected, rows=None, start_date="", end_date="")
 
 
 @app.route("/connect")
@@ -173,10 +173,31 @@ def run_scan():
     if not creds:
         return redirect(url_for("index"))
 
-    rows = run_pipeline(creds)
+    # HTML date inputs submit as YYYY-MM-DD; Gmail's search syntax expects
+    # YYYY/MM/DD. Both fields are optional — leaving either blank means
+    # no cutoff on that end (e.g. blank start = scan from the beginning
+    # of the mailbox, blank end = scan up to today).
+    start_date = request.form.get("start_date", "").replace("-", "/")
+    end_date = request.form.get("end_date", "").replace("-", "/")
+
+    rows = run_pipeline(creds, search_after=start_date, search_before=end_date)
     export_csv(rows, OUTPUT_PATH)
 
-    return render_template("dashboard.html", connected=True, rows=rows)
+    return render_template(
+        "dashboard.html", connected=True, rows=rows,
+        start_date=request.form.get("start_date", ""),
+        end_date=request.form.get("end_date", ""),
+    )
+
+
+@app.route("/disconnect", methods=["POST"])
+def disconnect():
+    if os.path.exists(TOKEN_STORE_PATH):
+        os.remove(TOKEN_STORE_PATH)
+    if os.path.exists(OUTPUT_PATH):
+        os.remove(OUTPUT_PATH)
+    session.clear()
+    return redirect(url_for("index"))
 
 
 @app.route("/download")

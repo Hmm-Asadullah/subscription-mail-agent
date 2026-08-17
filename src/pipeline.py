@@ -4,17 +4,33 @@ the web app (web_app.py). Takes already-obtained credentials and
 returns a list of Row objects — no I/O beyond the Gmail API itself.
 """
 
+import os
 import base64
 from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 
 from gmail_client import GmailClient, SUBSCRIPTION_QUERIES
 from filters import is_likely_subscription
 from parser import extract_price, extract_dates, extract_status, extract_provider
 from normalize import normalize_provider
 
-SEARCH_AFTER = "2026/02/01"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# If unset, scans the ENTIRE mailbox with no date cutoff. Set
+# SEARCH_AFTER_DATE (format YYYY/MM/DD) as an env var to limit the scan
+# to recent history instead — useful for large/old inboxes where a full
+# scan would be slow or costly on API quota.
+SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "")
+
+# Max messages fetched PER search query (there are 4 queries, so total
+# possible messages fetched is up to 4x this, before dedup). Gmail API
+# itself has no hard upper bound; this is a safety cap so a single scan
+# can't run unboundedly long. Override via MAX_RESULTS_PER_QUERY if a
+# very large mailbox needs a higher ceiling.
+MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "500"))
 
 
 @dataclass
@@ -45,15 +61,24 @@ def get_body_text(payload) -> str:
     return ""
 
 
-def run_pipeline(creds, search_after: str = SEARCH_AFTER) -> list:
+def run_pipeline(
+    creds,
+    search_after: str = SEARCH_AFTER,
+    search_before: str = "",
+    max_results: int = MAX_RESULTS_PER_QUERY,
+) -> list:
     client = GmailClient(creds)
     rows = []
     seen_ids = set()
 
     all_msg_ids = []
     for query in SUBSCRIPTION_QUERIES:
-        full_query = f"{query} after:{search_after}"
-        for msg_ref in client.search(full_query):
+        full_query = query
+        if search_after:
+            full_query += f" after:{search_after}"
+        if search_before:
+            full_query += f" before:{search_before}"
+        for msg_ref in client.search(full_query, max_results=max_results):
             msg_id = msg_ref["id"]
             if msg_id not in seen_ids:
                 seen_ids.add(msg_id)
