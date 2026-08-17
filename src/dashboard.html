@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Subscription Report</title>
+    <style>
+        body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a1a; }
+        h1 { font-size: 1.5rem; }
+        .btn { display: inline-block; padding: 10px 18px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; border: none; font-size: 1rem; cursor: pointer; }
+        .btn:hover { background: #1d4ed8; }
+        .btn-secondary { background: #16a34a; }
+        .btn-secondary:hover { background: #15803d; }
+        table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; font-size: 0.9rem; }
+        th { background: #f9fafb; }
+        .status-active { color: #16a34a; font-weight: 600; }
+        .status-canceled { color: #dc2626; font-weight: 600; }
+        .status-trial { color: #d97706; font-weight: 600; }
+        .empty { color: #6b7280; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Subscription Report</h1>
+
+    {% if not connected %}
+        <p>Connect your Gmail account to get started. Your inbox is only read, never modified.</p>
+        <a class="btn" href="{{ url_for('connect') }}">Connect Gmail</a>
+    {% else %}
+        <p>Gmail connected.</p>
+        <form action="{{ url_for('run_scan') }}" method="post" style="display:inline;">
+            <button class="btn" type="submit">Run scan</button>
+        </form>
+        {% if rows %}
+            <a class="btn btn-secondary" href="{{ url_for('download') }}">Download CSV</a>
+        {% endif %}
+
+        {% if rows %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Provider</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                        <th>First Seen</th>
+                        <th>Last Seen</th>
+                        <th>Subject</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        <td>{{ row.provider }}</td>
+                        <td>{{ row.amount }} {{ row.currency }}</td>
+                        <td class="status-{{ row.status }}">{{ row.status }}</td>
+                        <td>{{ row.start_date }}</td>
+                        <td>{{ row.end_date }}</td>
+                        <td>{{ row.source_email_subject }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% elif rows is not none %}
+            <p class="empty">No subscriptions found in this scan.</p>
+        {% endif %}
+    {% endif %}
+</body>
+</html>
