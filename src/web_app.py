@@ -1,21 +1,21 @@
 """
-Web app for the client — no terminal, no code, just a browser.
+Web app — per-browser session isolation.
 
-Flow:
-  1. Client visits the site, clicks "Connect Gmail"
-  2. Redirected to Google's consent screen (web OAuth flow, not desktop)
-  3. Google redirects back to /oauth2callback with an auth code
-  4. Token is saved (encrypted) server-side
-  5. Client clicks "Run scan" -> pipeline runs -> results shown in a table
-  6. Client clicks "Download CSV" -> gets the file
+Each visitor's Gmail connection (OAuth token) lives inside their OWN
+signed session cookie, encrypted at rest. Scan results are cached
+server-side keyed by a random per-session ID. Nothing is shared
+globally between browsers anymore — one person connecting or running
+a scan can never affect what another person sees, with no manual
+"Disconnect" step required for safety (though the button still exists
+as a convenience/logout action for the person's own session).
 
 Run locally for testing with: python src/web_app.py
-Deploy with a real WSGI server (gunicorn) behind HTTPS in production —
-see the deployment notes below the code.
+Deploy with gunicorn behind HTTPS in production.
 """
 
 import os
 import json
+import secrets
 
 from dotenv import load_dotenv
 from flask import Flask, redirect, request, session, render_template, send_file, url_for
@@ -31,8 +31,7 @@ from export import export_csv
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 CLIENT_SECRET_PATH = os.path.join(BASE_DIR, "credentials", "client_secret_web.json")
-TOKEN_STORE_PATH = os.path.join(BASE_DIR, "credentials", "client_token.enc")
-OUTPUT_PATH = os.path.join(BASE_DIR, "output", "subscriptions.csv")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -60,38 +59,28 @@ def get_client_config() -> dict:
 
 CLIENT_CONFIG = get_client_config()
 
-# Must exactly match an Authorized redirect URI configured in Google Cloud
-# Console for this OAuth client. Use your real domain in production.
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:5000/oauth2callback")
 
 # oauthlib refuses plain HTTP by default, even for localhost. Google itself
 # allows http://localhost as a testing exception, but the library doesn't
 # know that unless told explicitly. Only enable this bypass when the
-# redirect URI is actually localhost — never in production, where the
-# redirect URI will be a real https:// address and this line has no effect.
+# redirect URI is actually localhost — never in production.
 if REDIRECT_URI.startswith("http://localhost"):
     os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
-# Secret key used to sign the Flask session cookie — set a real random
-# value via environment variable in production, never hardcode it.
-# dashboard.html lives directly in src/, alongside this file — not in a
-# separate templates/ folder.
 TEMPLATES_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, template_folder=TEMPLATES_DIR)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-only-change-me")
 
 # Railway (and most hosts) terminate HTTPS at their edge and forward
-# requests to the container over plain HTTP internally. Without this,
-# Flask sees every request as http://, which makes oauthlib incorrectly
-# reject the OAuth callback as insecure even though the real traffic
-# was HTTPS. ProxyFix tells Flask to trust the X-Forwarded-Proto header
-# Railway sets, so request.url correctly reports https://.
+# requests to the container over plain HTTP internally. ProxyFix tells
+# Flask to trust the X-Forwarded-Proto header so request.url correctly
+# reports https://.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Key used to encrypt the saved token at rest. Generate once with
-# Fernet.generate_key() and store it as an environment variable —
-# losing this key means the client has to reconnect their Gmail account.
+# Key used to encrypt the OAuth token before it's stored in the session
+# cookie. Generate once with Fernet.generate_key() and set as an env var.
 FERNET_KEY = os.environ.get("TOKEN_ENCRYPTION_KEY")
 if not FERNET_KEY:
     raise RuntimeError(
@@ -100,20 +89,34 @@ if not FERNET_KEY:
     )
 fernet = Fernet(FERNET_KEY.encode())
 
+# Server-side cache for scan results, keyed by each session's own random
+# ID (stored in the cookie, not the data itself — scan results can be
+# too large to fit in a cookie). NOTE: this is in-memory, per-process.
+# Fine for a single gunicorn worker (the current Procfile default). If
+# you ever scale to multiple workers, this cache needs to move to a
+# shared store (e.g. Redis) since each worker would otherwise have its
+# own separate cache.
+SCAN_CACHE = {}
+
+
+def get_session_id() -> str:
+    if "sid" not in session:
+        session["sid"] = secrets.token_hex(16)
+    return session["sid"]
+
 
 def save_token(creds: Credentials):
-    os.makedirs(os.path.dirname(TOKEN_STORE_PATH), exist_ok=True)
-    encrypted = fernet.encrypt(creds.to_json().encode())
-    with open(TOKEN_STORE_PATH, "wb") as f:
-        f.write(encrypted)
+    """Encrypts the token and stores it in THIS visitor's own session cookie."""
+    encrypted = fernet.encrypt(creds.to_json().encode()).decode()
+    session["token"] = encrypted
 
 
 def load_token():
-    if not os.path.exists(TOKEN_STORE_PATH):
+    """Reads and decrypts the token from THIS visitor's own session cookie."""
+    encrypted = session.get("token")
+    if not encrypted:
         return None
-    with open(TOKEN_STORE_PATH, "rb") as f:
-        encrypted = f.read()
-    decrypted = fernet.decrypt(encrypted)
+    decrypted = fernet.decrypt(encrypted.encode())
     return Credentials.from_authorized_user_info(json.loads(decrypted), SCOPES)
 
 
@@ -144,9 +147,9 @@ def connect():
         autogenerate_code_verifier=True,
     )
     auth_url, state = flow.authorization_url(
-        access_type="offline",       # needed to receive a refresh token
+        access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",            # forces refresh_token on every fresh connect
+        prompt="consent",
     )
     session["oauth_state"] = state
     session["code_verifier"] = flow.code_verifier
@@ -174,14 +177,17 @@ def run_scan():
         return redirect(url_for("index"))
 
     # HTML date inputs submit as YYYY-MM-DD; Gmail's search syntax expects
-    # YYYY/MM/DD. Both fields are optional — leaving either blank means
-    # no cutoff on that end (e.g. blank start = scan from the beginning
-    # of the mailbox, blank end = scan up to today).
+    # YYYY/MM/DD. Both fields are optional.
     start_date = request.form.get("start_date", "").replace("-", "/")
     end_date = request.form.get("end_date", "").replace("-", "/")
 
     rows = run_pipeline(creds, search_after=start_date, search_before=end_date)
-    export_csv(rows, OUTPUT_PATH)
+
+    sid = get_session_id()
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    csv_path = os.path.join(OUTPUT_DIR, f"{sid}.csv")
+    export_csv(rows, csv_path)
+    SCAN_CACHE[sid] = {"rows": rows, "csv_path": csv_path}
 
     return render_template(
         "dashboard.html", connected=True, rows=rows,
@@ -192,19 +198,28 @@ def run_scan():
 
 @app.route("/disconnect", methods=["POST"])
 def disconnect():
-    if os.path.exists(TOKEN_STORE_PATH):
-        os.remove(TOKEN_STORE_PATH)
-    if os.path.exists(OUTPUT_PATH):
-        os.remove(OUTPUT_PATH)
+    sid = session.get("sid")
+    if sid and sid in SCAN_CACHE:
+        csv_path = SCAN_CACHE[sid].get("csv_path")
+        if csv_path and os.path.exists(csv_path):
+            os.remove(csv_path)
+        del SCAN_CACHE[sid]
+
     session.clear()
     return redirect(url_for("index"))
 
 
 @app.route("/download")
 def download():
-    if not os.path.exists(OUTPUT_PATH):
+    sid = session.get("sid")
+    if not sid or sid not in SCAN_CACHE:
         return redirect(url_for("index"))
-    return send_file(OUTPUT_PATH, as_attachment=True, download_name="subscriptions.csv")
+
+    csv_path = SCAN_CACHE[sid]["csv_path"]
+    if not os.path.exists(csv_path):
+        return redirect(url_for("index"))
+
+    return send_file(csv_path, as_attachment=True, download_name="subscriptions.csv")
 
 
 if __name__ == "__main__":

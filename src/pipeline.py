@@ -1,12 +1,16 @@
 """
-Core extraction pipeline, callable from either the CLI (main.py) or
-the web app (web_app.py). Takes already-obtained credentials and
-returns a list of Row objects — no I/O beyond the Gmail API itself.
+Core extraction pipeline. Callable from either the CLI (main.py) or the web
+app (web_app.py). Takes already-obtained credentials and returns a
+list of Row objects representing CURRENTLY ACTIVE subscriptions only —
+canceled subscriptions and free trials that never converted are
+filtered out, even if they matched the search queries.
 """
 
 import os
 import base64
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from collections import defaultdict
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -21,15 +25,11 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # If unset, scans the ENTIRE mailbox with no date cutoff. Set
 # SEARCH_AFTER_DATE (format YYYY/MM/DD) as an env var to limit the scan
-# to recent history instead — useful for large/old inboxes where a full
-# scan would be slow or costly on API quota.
+# to recent history instead.
 SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "")
 
 # Max messages fetched PER search query (there are 4 queries, so total
-# possible messages fetched is up to 4x this, before dedup). Gmail API
-# itself has no hard upper bound; this is a safety cap so a single scan
-# can't run unboundedly long. Override via MAX_RESULTS_PER_QUERY if a
-# very large mailbox needs a higher ceiling.
+# possible messages fetched is up to 4x this, before dedup).
 MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "500"))
 
 
@@ -61,6 +61,57 @@ def get_body_text(payload) -> str:
     return ""
 
 
+def _parse_email_date(date_str: str):
+    """Parses an email Date header into a sortable datetime. Falls back
+    to the minimum possible date if parsing fails, so malformed dates
+    sort first rather than crashing the sort."""
+    try:
+        return parsedate_to_datetime(date_str)
+    except (TypeError, ValueError):
+        import datetime
+        return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+def merge_to_current_subscriptions(rows: list) -> list:
+    """
+    Collapses multiple emails from the same provider (e.g. 12 monthly
+    Netflix receipts) into a single row representing that subscription's
+    CURRENT state, then keeps only subscriptions whose latest known
+    status is "active" — free trials that never converted and anything
+    canceled are dropped from the result.
+
+    "Current state" is determined by the chronologically most recent
+    matching email for that provider (by actual email send date), not
+    by dates mentioned inside the email body.
+    """
+    groups = defaultdict(list)
+    for row in rows:
+        groups[row.provider].append(row)
+
+    merged = []
+    for provider, group in groups.items():
+        group.sort(key=lambda r: _parse_email_date(r.source_email_date))
+        earliest = group[0]
+        latest = group[-1]
+
+        if latest.status != "active":
+            continue  # drop canceled and trial-only subscriptions
+
+        merged.append(Row(
+            provider=provider,
+            start_date=earliest.start_date or earliest.source_email_date,
+            end_date=latest.end_date or latest.source_email_date,
+            amount=latest.amount,
+            currency=latest.currency,
+            reason=latest.reason,
+            status=latest.status,
+            source_email_subject=latest.source_email_subject,
+            source_email_date=latest.source_email_date,
+        ))
+
+    return merged
+
+
 def run_pipeline(
     creds,
     search_after: str = SEARCH_AFTER,
@@ -83,6 +134,8 @@ def run_pipeline(
             if msg_id not in seen_ids:
                 seen_ids.add(msg_id)
                 all_msg_ids.append(msg_id)
+
+    print(f"Found {len(all_msg_ids)} unique candidate messages. Fetching in batches...")
 
     for msg_id, msg in client.get_messages_batch(all_msg_ids):
         headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
@@ -113,4 +166,4 @@ def run_pipeline(
             source_email_date=headers.get("Date", ""),
         ))
 
-    return rows
+    return merge_to_current_subscriptions(rows)
