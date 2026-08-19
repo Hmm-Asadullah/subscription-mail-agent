@@ -29,7 +29,7 @@ SUBSCRIPTION_QUERIES = [
     'OR youtube.com OR microsoft.com OR dropbox.com OR apple.com OR hulu.com '
     'OR hbomax.com OR playstation.com OR github.com OR google.com OR icloud.com '
     'OR canva.com OR notion.so OR zoom.us OR slack.com '
-    
+
     # AI / Productivity
     'OR openai.com OR chatgpt.com OR anthropic.com OR claude.ai '
     'OR perplexity.ai OR cursor.com OR grammarly.com OR jasper.ai '
@@ -71,7 +71,7 @@ SUBSCRIPTION_QUERIES = [
 
     # News / Publications
     'OR nytimes.com OR washingtonpost.com OR wsj.com '
-    'OR economist.com OR medium.com '' ) -category:social',
+    'OR economist.com OR medium.com) -category:social',
 
     # Known billing-system sender address patterns.
     'from:(billing@ OR receipts@ OR invoices@ OR subscriptions@) '

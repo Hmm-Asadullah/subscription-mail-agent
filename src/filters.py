@@ -22,10 +22,15 @@ STRONG_PHRASES = {
 }
 
 # Words that specifically signal RECURRING billing — meaningful on their
-# own when paired with a price.
+# own when paired with a price. Deliberately more specific than a bare
+# "plan" or "membership" — those show up constantly in loyalty-program
+# footers, meal plans, and marketing boilerplate on completely unrelated
+# one-time receipts (restaurant orders, utility payments, etc.).
 RECURRING_KEYWORDS = {
-    "subscription", "renewal", "renew", "membership", "plan",
-    "billing", "recurring", "auto-renew", "auto renew",
+    "subscription", "renewal", "auto-renew", "auto renew",
+    "recurring payment", "recurring billing", "billing cycle",
+    "your plan renews", "membership renewal", "subscription plan",
+    "monthly plan", "annual plan", "yearly plan",
 }
 
 # Gmail's automated-notification/social footer boilerplate — if this shows

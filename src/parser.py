@@ -25,6 +25,8 @@ STATUS_CUES = {
         "cancellation confirmed",
         "your subscription has been canceled",
         "successfully unsubscribed",
+        "subscription expired", "has expired", "trial expired",
+        "your subscription ended", "membership expired", "plan expired",
     ],
     "trial": ["free trial", "trial period", "trial ends"],
 }
