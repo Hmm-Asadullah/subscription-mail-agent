@@ -11,3 +11,4 @@ werkzeug
 cryptography
 gunicorn
 streamlit
+google-genai

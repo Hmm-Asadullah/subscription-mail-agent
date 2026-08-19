@@ -18,7 +18,7 @@ from dataclasses import asdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from auth import get_credentials
-from pipeline import run_pipeline
+from llm_pipeline import run_pipeline
 
 st.set_page_config(page_title="Subscription Email Scanner", page_icon="📧", layout="centered")
 

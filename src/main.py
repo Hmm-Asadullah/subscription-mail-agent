@@ -8,7 +8,7 @@ Run from the project root: python src/main.py
 import os
 
 from auth import get_credentials
-from pipeline import run_pipeline
+from llm_pipeline import run_pipeline
 from export import export_csv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
