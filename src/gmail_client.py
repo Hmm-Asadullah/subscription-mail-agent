@@ -6,10 +6,76 @@ from googleapiclient.discovery import build
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 SUBSCRIPTION_QUERIES = [
-    'subject:(receipt OR invoice OR "payment confirmation" OR "payment receipt") -category:social -category:promotions -category:updates',
-    'subject:("your subscription" OR "auto-renew" OR "auto-renewal" OR "trial ending" OR "trial ends") -category:social -category:updates',
-    'subject:("renewal confirmation" OR "subscription renewed" OR "your receipt from" OR "payment successful") -category:social -category:updates',
-    'from:(billing@ OR receipts@ OR invoices@) -category:social -category:promotions -category:updates',
+    # Broad recurring-billing subject terms — single words, not rigid exact
+    # phrases, so variations in real-world subject lines still match.
+    'subject:(subscription OR renewal OR renew OR "auto-renew" OR "auto renew" '
+    'OR membership OR "trial ending" OR "trial ends" OR "billing cycle") '
+    '-category:social -category:promotions',
+
+    # Generic payment/billing subject terms. Broader than before, but the
+    # one-time-purchase false positives this can catch (e.g. a single
+    # Amazon order receipt) are handled downstream by the classifier,
+    # not by narrowing the search itself — narrowing the search is what
+    # was causing real subscriptions to be missed entirely.
+    'subject:(receipt OR invoice OR "payment confirmation" OR "payment successful" '
+    'OR "payment received" OR "your bill" OR "billing statement") '
+    '-category:social -category:promotions',
+
+    # Known major subscription providers, searched by sender domain rather
+    # than subject wording — catches real subscriptions regardless of how
+    # that specific provider phrases their subject line. Extend this list
+    # with any provider you know your client is likely subscribed to.
+    'from:(netflix.com OR spotify.com OR adobe.com OR amazon.com OR disneyplus.com '
+    'OR youtube.com OR microsoft.com OR dropbox.com OR apple.com OR hulu.com '
+    'OR hbomax.com OR playstation.com OR github.com OR google.com OR icloud.com '
+    'OR canva.com OR notion.so OR zoom.us OR slack.com '
+    
+    # AI / Productivity
+    'OR openai.com OR chatgpt.com OR anthropic.com OR claude.ai '
+    'OR perplexity.ai OR cursor.com OR grammarly.com OR jasper.ai '
+    'OR copy.ai OR midjourney.com OR runwayml.com OR elevenlabs.io '
+    'OR character.ai OR poe.com OR lovable.dev OR replit.com '
+
+    # Streaming / Entertainment
+    'OR primevideo.com OR paramount.com OR paramountplus.com '
+    'OR peacocktv.com OR crunchyroll.com OR discoveryplus.com '
+    'OR appletv.com OR max.com OR spotify.com OR tidal.com '
+    'OR audible.com OR kindle.com '
+
+    # Gaming
+    'OR xbox.com OR microsoft.com OR nintendo.com OR steampowered.com '
+    'OR epicgames.com OR ea.com OR ubisoft.com OR riotgames.com '
+    'OR battlenet.com OR blizzard.com OR twitch.tv '
+
+    # Cloud Storage / Software
+    'OR one.google.com OR drive.google.com OR box.com '
+    'OR evernote.com OR todoist.com OR 1password.com '
+    'OR lastpass.com OR dashlane.com OR nordvpn.com '
+    'OR expressvpn.com OR surfshark.com'
+
+     # Business / Developer / SaaS
+    'OR atlassian.com OR jira.com OR confluence.com '
+    'OR monday.com OR asana.com OR trello.com '
+    'OR hubspot.com OR salesforce.com OR hubspot.net '
+    'OR freshbooks.com OR quickbooks.intuit.com OR intuit.com '
+    'OR grammarly.com OR loom.com OR calendly.com '
+    'OR miro.com OR figma.com OR framer.com '
+
+    # Education
+    'OR coursera.org OR udemy.com OR skillshare.com '
+    'OR masterclass.com OR duolingo.com OR linkedin.com '
+
+    # Shopping / Memberships
+    'OR walmart.com OR costco.com OR ebay.com '
+    'OR chewy.com OR instacart.com '
+
+    # News / Publications
+    'OR nytimes.com OR washingtonpost.com OR wsj.com '
+    'OR economist.com OR medium.com '' ) -category:social',
+
+    # Known billing-system sender address patterns.
+    'from:(billing@ OR receipts@ OR invoices@ OR subscriptions@) '
+    '-category:social -category:promotions',
 ]
 
 

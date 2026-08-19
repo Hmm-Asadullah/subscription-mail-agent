@@ -30,7 +30,7 @@ SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "")
 
 # Max messages fetched PER search query (there are 4 queries, so total
 # possible messages fetched is up to 4x this, before dedup).
-MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "500"))
+MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "5000"))
 
 
 @dataclass
@@ -144,7 +144,7 @@ def run_pipeline(
         body = get_body_text(msg["payload"])
         snippet = msg.get("snippet", "")
 
-        if not is_likely_subscription(subject, snippet, body):
+        if not is_likely_subscription(subject, snippet, body, sender):
             continue
 
         amount, currency = extract_price(f"{subject} {body}")
