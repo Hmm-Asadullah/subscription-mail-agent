@@ -8,17 +8,19 @@ import re
 
 from normalize import PROVIDER_ALIASES
 
-# Strong phrases that almost only appear in actual billing/subscription emails.
-# A match on any of these is enough on its own.
+# Strong phrases that almost only appear in actual RECURRING billing
+# emails. A match on any of these is enough on its own — no price or
+# other context needed. Deliberately excludes generic terms like "your
+# receipt" or "payment receipt" — those appear on ANY transaction,
+# subscription or not, and caused false positives on one-time purchases.
 STRONG_PHRASES = {
-    "payment confirmation", "payment successful", "payment receipt",
-    "your invoice", "your receipt", "receipt for your payment",
     "auto-renew", "auto-renewal", "subscription renewed",
     "renewal confirmation", "your subscription has been",
+    "subscription confirmed", "subscription activated",
     "trial ending", "trial ends", "trial period ends",
-    "next billing date", "amount charged", "you have been charged",
-    "cancellation confirmed", "successfully unsubscribed",
+    "next billing date", "cancellation confirmed", "successfully unsubscribed",
     "billing cycle", "your bill is ready", "billing statement",
+    "recurring payment confirmation", "subscription payment",
 }
 
 # Words that specifically signal RECURRING billing — meaningful on their
