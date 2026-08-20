@@ -102,9 +102,9 @@ def _parse_email_date(date_str: str):
 
 def merge_to_current_subscriptions(rows: list) -> list:
     """
-    Collapses multiple emails from the same provider (e.g. 12 monthly
-    Netflix receipts) into a single row representing that subscription's
-    CURRENT state. Excludes subscriptions whose latest status is canceled/expired.
+    Collapses multiple emails from the same provider into a single row
+    representing that subscription's CURRENT state.
+    Strictly keeps ONLY currently ACTIVE subscriptions with a paid non-zero amount.
     """
     groups = defaultdict(list)
     for row in rows:
@@ -117,17 +117,20 @@ def merge_to_current_subscriptions(rows: list) -> list:
         latest = group[-1]
 
         status = (latest.status or "").strip().lower()
-        if status in ("canceled", "cancelled", "expired"):
-            continue  # drop canceled and expired subscriptions
+        if status != "active":
+            continue  # drop canceled, trial, deactivated, or expired subscriptions
+
+        if latest.amount <= 0.0:
+            continue  # drop non-paid, $0, or trial notices
 
         merged.append(Row(
             provider=provider,
             start_date=earliest.start_date or earliest.source_email_date,
             end_date=latest.end_date or latest.source_email_date,
             amount=latest.amount,
-            currency=latest.currency,
-            reason=latest.reason,
-            status=status if status else "active",
+            currency=latest.currency if latest.currency else "USD",
+            reason=latest.reason if latest.reason else "subscription",
+            status="active",
             source_email_subject=latest.source_email_subject,
             source_email_date=latest.source_email_date,
         ))
@@ -171,8 +174,14 @@ def run_pipeline(
             continue
 
         amount, currency = extract_price(f"{subject} {body}")
-        dates = extract_dates(body)
+        if not amount or amount <= 0.0:
+            continue
+
         status = extract_status(f"{subject} {body}")
+        if status != "active":
+            continue
+
+        dates = extract_dates(body)
         sender_name = sender.split("<")[0].strip()
         raw_provider = extract_provider(sender, sender_name)
         provider = normalize_provider(raw_provider, sender)
@@ -181,10 +190,10 @@ def run_pipeline(
             provider=provider,
             start_date=str(dates[0]) if dates else "",
             end_date=str(dates[-1]) if dates else "",
-            amount=amount or 0.0,
-            currency=currency or "",
-            reason="unknown",
-            status=status,
+            amount=float(amount),
+            currency=currency or "USD",
+            reason="subscription",
+            status="active",
             source_email_subject=subject,
             source_email_date=headers.get("Date", ""),
         ))

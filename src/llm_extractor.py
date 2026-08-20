@@ -33,35 +33,37 @@ client = genai.Client(api_key=API_KEY)
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.7-flash", "gemini-flash-latest"]
 
-SYSTEM_PROMPT = """You are a precise email classifier and data extractor for a subscription-tracking tool.
+SYSTEM_PROMPT = """You are a strict and precise email classifier and data extractor for active paid recurring subscriptions.
 
-Given an email's sender, subject, and body, determine if it is a genuine subscription billing email — \
-a receipt, invoice, renewal notice, trial notice, expiration notice, or cancellation confirmation for a \
-RECURRING paid service (software, streaming, memberships that auto-renew, SaaS tools, etc.).
+Your goal is to ONLY identify emails confirming that the user has been BILLED or CHARGED for an ACTIVE RECURRING SUBSCRIPTION (monthly, yearly, or weekly).
 
-Do NOT classify as a subscription email:
-- Newsletters, social media notifications, job alerts, marketing promotions
-- One-time purchase receipts: restaurant/food orders, retail orders, one-off invoices
-- Utility bill payments, government e-payment receipts, tax payments — even if they recur
-  periodically, they are NOT subscriptions in the SaaS/membership sense
-- Any email whose only "recurring" signal is a loyalty program, rewards program, or membership
-  mention in a footer/promo, when the email itself is a one-time transaction receipt
+STRICT RULES:
+1. ONLY return "is_subscription": true if:
+   - The email is an actual RECEIPT, INVOICE, or BILLING CONFIRMATION for an active, paid recurring service (e.g., SaaS tools, software, streaming, cloud services, recurring paid memberships).
+   - The email confirms an actual non-zero payment or charge was billed (amount > 0).
+   - The billing cadence is recurring (monthly, yearly, weekly).
 
-Pay close attention to STATUS. If the email says a subscription/trial/membership has EXPIRED, \
-ENDED, or was CANCELED, the status is "canceled" — NOT "active", even though the email is about \
-a subscription. Only mark "active" if the email confirms an ongoing, currently-paying subscription \
-(a renewal receipt, a successful recurring payment, or similar).
+2. ALWAYS return "is_subscription": false (and provider: null, amount: null, status: null) for ANY of the following:
+   - Free trials, trial ending notices, trial expiration notices (e.g. "Your Free Trial", "Trial Ends Tomorrow").
+   - Cancellation notices, deactivation notices, account suspensions, expiration notices (e.g. "subscription is being deactivated", "cancellation confirmed", "subscription expired").
+   - Marketing emails, newsletters, product promotions, discount offers, tips (e.g. Grammarly tips/promotions, upgrade discounts, feature announcements, even if they mention prices).
+   - One-time purchases, single retail orders, restaurant/food orders, one-off utility bills, single invoice payments.
+   - $0.00 / Free tier notifications / zero-amount notices.
+
+3. STATUS:
+   - Must be "active" for ongoing, currently-paid subscriptions.
+   - If the subscription is canceled, deactivated, expired, or a trial, "is_subscription" MUST be false.
 
 Respond with ONLY a JSON object matching this exact schema:
 {
   "is_subscription": true or false,
-  "provider": "the service/company name, or null if not a subscription",
-  "amount": number or null,
-  "currency": "3-letter code like USD, or null",
-  "frequency": "monthly" or "yearly" or "weekly" or "unknown" or null,
-  "status": "active" or "canceled" or "trial" or null,
-  "reason": "short category like streaming, software, cloud storage, fitness, or null",
-  "confidence": number between 0 and 1 (be honest — use below 0.6 if genuinely unsure)
+  "provider": "company/service name, or null",
+  "amount": number greater than 0, or null,
+  "currency": "3-letter code like USD, EUR, GBP, or null",
+  "frequency": "monthly" or "yearly" or "weekly" or null,
+  "status": "active" or null,
+  "reason": "short category like software, streaming, cloud, or null",
+  "confidence": number between 0 and 1
 }"""
 
 

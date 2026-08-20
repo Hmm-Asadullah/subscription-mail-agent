@@ -89,6 +89,34 @@ class TestLLMPipeline(unittest.TestCase):
         self.assertEqual(res.get("status"), "active")
         self.assertAlmostEqual(float(res.get("amount") or 0), 11.99)
 
+    def test_rejection_of_deactivation_and_trial_and_promo(self):
+        # 1. Deactivation email
+        res1 = classify_and_extract(
+            "[Important Notice] Your Confluence subscription is being deactivated",
+            "No-Reply@Pucit-Team.Atlassian.Net",
+            "Your Confluence subscription has ended and will be deactivated on April 30."
+        )
+        self.assertIsNotNone(res1)
+        self.assertFalse(res1.get("is_subscription"))
+
+        # 2. Trial ending email
+        res2 = classify_and_extract(
+            "Asad - Your SpiraTeam Trial Ends Tomorrow!",
+            "Inflectra Sales <sales@inflectra.com>",
+            "Hi Asad, your 30-day free trial of SpiraTeam will expire tomorrow. Buy a license today."
+        )
+        self.assertIsNotNone(res2)
+        self.assertFalse(res2.get("is_subscription"))
+
+        # 3. Marketing email
+        res3 = classify_and_extract(
+            "More clarity, more confidence, less effort 💎",
+            "Grammarly <info@send.grammarly.com>",
+            "Unlock Premium for $72.00/year to get writing suggestions and clarity."
+        )
+        self.assertIsNotNone(res3)
+        self.assertFalse(res3.get("is_subscription"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,8 +24,8 @@ FIXTURES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixture
 EXPECTED = {
     "netflix_monthly_receipt.eml": True,
     "adobe_annual_invoice.eml": True,
-    "spotify_cancellation.eml": True,
-    "dropbox_trial_ending.eml": True,
+    "spotify_cancellation.eml": False,
+    "dropbox_trial_ending.eml": False,
     "netflix_non_english_receipt.eml": True,
     "forwarded_github_receipt.eml": True,
     "linkedin_notification_false_positive.eml": False,

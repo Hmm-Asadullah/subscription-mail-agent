@@ -24,11 +24,14 @@ STATUS_CUES = {
     "canceled": [
         "cancellation confirmed",
         "your subscription has been canceled",
+        "your subscription has been cancelled",
         "successfully unsubscribed",
         "subscription expired", "has expired", "trial expired",
         "your subscription ended", "membership expired", "plan expired",
+        "deactivated", "being deactivated", "deactivation",
+        "account suspended", "terminated", "trial ends", "trial ending",
     ],
-    "trial": ["free trial", "trial period", "trial ends"],
+    "trial": ["free trial", "trial period", "trial ends", "trial ending"],
 }
 
 CURRENCY_SYMBOL_MAP = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
@@ -59,7 +62,7 @@ def extract_frequency(text: str) -> str:
     for freq, cues in FREQUENCY_CUES.items():
         if any(cue in text_lower for cue in cues):
             return freq
-    return "unknown"
+    return "monthly"
 
 
 def extract_status(text: str) -> str:
@@ -67,11 +70,16 @@ def extract_status(text: str) -> str:
     for status, cues in STATUS_CUES.items():
         if any(cue in text_lower for cue in cues):
             return status
-    return "active"  # default assumption if a billing email exists and no cancel signal found
+    return "active"
 
 
 def extract_provider(sender_email: str, sender_name: str) -> str:
-    if sender_name and sender_name.strip().lower() not in ("no-reply", "noreply", ""):
-        return sender_name.strip()
-    domain = sender_email.split("@")[-1].split(".")[0]
+    clean_name = sender_name.strip()
+    if clean_name and clean_name.lower() not in ("no-reply", "noreply", "billing", "receipts", "invoices", "support", ""):
+        if "@" not in clean_name:
+            return clean_name
+    domain = sender_email.split("@")[-1]
+    domain_parts = domain.split(".")
+    if len(domain_parts) >= 2:
+        return domain_parts[-2].capitalize()
     return domain.capitalize()
