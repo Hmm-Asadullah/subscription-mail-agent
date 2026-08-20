@@ -47,18 +47,46 @@ class Row:
 
 
 def get_body_text(payload) -> str:
-    parts = payload.get("parts", [payload])
-    for part in parts:
-        if part.get("mimeType") == "text/plain":
-            data = part["body"].get("data", "")
-            if data:
-                return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-        if part.get("mimeType") == "text/html":
-            data = part["body"].get("data", "")
-            if data:
-                html = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+    """
+    Recursively traverses Gmail's MIME payload structure (multipart/mixed,
+    multipart/related, multipart/alternative, text/html, text/plain) to extract
+    the best available readable text content.
+    """
+    if not payload:
+        return ""
+
+    def _extract(part):
+        mime_type = part.get("mimeType", "")
+        body_data = part.get("body", {}).get("data", "")
+
+        if mime_type == "text/plain" and body_data:
+            try:
+                return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+
+        if mime_type == "text/html" and body_data:
+            try:
+                html = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
                 return BeautifulSoup(html, "html.parser").get_text(" ")
-    return ""
+            except Exception:
+                pass
+
+        subparts = part.get("parts", [])
+        extracted_plain = ""
+        extracted_html = ""
+        for sub in subparts:
+            text = _extract(sub)
+            if text:
+                if sub.get("mimeType") == "text/plain":
+                    extracted_plain = text
+                elif not extracted_html:
+                    extracted_html = text
+
+        return extracted_plain or extracted_html or ""
+
+    text = _extract(payload)
+    return text.strip() if text else ""
 
 
 def _parse_email_date(date_str: str):
@@ -76,13 +104,7 @@ def merge_to_current_subscriptions(rows: list) -> list:
     """
     Collapses multiple emails from the same provider (e.g. 12 monthly
     Netflix receipts) into a single row representing that subscription's
-    CURRENT state, then keeps only subscriptions whose latest known
-    status is "active" — free trials that never converted and anything
-    canceled are dropped from the result.
-
-    "Current state" is determined by the chronologically most recent
-    matching email for that provider (by actual email send date), not
-    by dates mentioned inside the email body.
+    CURRENT state. Excludes subscriptions whose latest status is canceled/expired.
     """
     groups = defaultdict(list)
     for row in rows:
@@ -94,8 +116,9 @@ def merge_to_current_subscriptions(rows: list) -> list:
         earliest = group[0]
         latest = group[-1]
 
-        if latest.status != "active":
-            continue  # drop canceled and trial-only subscriptions
+        status = (latest.status or "").strip().lower()
+        if status in ("canceled", "cancelled", "expired"):
+            continue  # drop canceled and expired subscriptions
 
         merged.append(Row(
             provider=provider,
@@ -104,7 +127,7 @@ def merge_to_current_subscriptions(rows: list) -> list:
             amount=latest.amount,
             currency=latest.currency,
             reason=latest.reason,
-            status=latest.status,
+            status=status if status else "active",
             source_email_subject=latest.source_email_subject,
             source_email_date=latest.source_email_date,
         ))

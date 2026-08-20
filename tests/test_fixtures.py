@@ -54,7 +54,7 @@ def run():
             continue
 
         subject, sender, body = load_eml(path)
-        result = is_likely_subscription(subject, "", body)
+        result = is_likely_subscription(subject, "", body, sender=sender)
 
         status = "PASS" if result == expected else "FAIL"
         if status == "PASS":

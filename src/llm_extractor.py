@@ -29,10 +29,9 @@ if not API_KEY:
 
 client = genai.Client(api_key=API_KEY)
 
-# Flash tier is the right choice here — cheap, fast, and this is a
-# straightforward classification/extraction task, not complex reasoning.
-# Override via GEMINI_MODEL if you want a different tier.
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+# Model configuration with fallback list in case of temporary provider spike/deprecation
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.7-flash", "gemini-flash-latest"]
 
 SYSTEM_PROMPT = """You are a precise email classifier and data extractor for a subscription-tracking tool.
 
@@ -66,29 +65,64 @@ Respond with ONLY a JSON object matching this exact schema:
 }"""
 
 
+def _parse_json_response(raw_text: str) -> dict:
+    text = raw_text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Attempt to extract JSON from surrounding text using brace matching
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
 def classify_and_extract(subject: str, sender: str, body: str) -> dict | None:
     """
     Sends one email to the LLM for combined classification + extraction.
-    Returns a dict matching the schema above, or None if the call fails
-    or the response can't be parsed — fails safe, treated as not a match
-    rather than crashing the whole scan over one bad email.
+    Tries primary model and falls back to alternate flash models if needed.
+    Returns a normalized dict or None if LLM is unavailable.
     """
-    # Truncate the body to keep cost/latency predictable per email.
-    truncated_body = body[:2000]
+    truncated_body = body[:2500] if body else ""
+    prompt_content = f"From: {sender}\nSubject: {subject}\n\nBody:\n{truncated_body}"
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=f"From: {sender}\nSubject: {subject}\n\nBody:\n{truncated_body}",
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                max_output_tokens=300,
-            ),
-        )
-        raw_text = response.text.strip()
-        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw_text)
-    except Exception as e:
-        print(f"[llm_extractor] Failed to classify/extract email ({subject!r}): {e}")
-        return None
+    # Try models in fallback order
+    models_to_try = []
+    for m in FALLBACK_MODELS:
+        if m and m not in models_to_try:
+            models_to_try.append(m)
+
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    max_output_tokens=1000,
+                ),
+            )
+            if response and response.text:
+                data = _parse_json_response(response.text)
+                if isinstance(data, dict):
+                    # Sanitize status to lowercase
+                    if data.get("status"):
+                        data["status"] = str(data["status"]).strip().lower()
+                    return data
+        except Exception as e:
+            last_error = e
+            continue
+
+    print(f"[llm_extractor] Failed to classify email ({subject!r}): {last_error}")
+    return None

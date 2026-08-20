@@ -67,6 +67,12 @@
             </form>
         </div>
 
+        {% if error %}
+            <div style="background-color: #fee2e2; border: 1px solid #f87171; color: #b91c1c; padding: 12px; border-radius: 6px; margin-top: 16px;">
+                {{ error }}
+            </div>
+        {% endif %}
+
         {% if rows %}
             <table>
                 <thead>
@@ -92,8 +98,8 @@
                     {% endfor %}
                 </tbody>
             </table>
-        {% elif rows is not none %}
-            <p class="empty">No subscriptions found in this scan.</p>
+        {% elif rows is not none and not error %}
+            <p class="empty">No active subscriptions found in this scan.</p>
         {% endif %}
     {% endif %}
 </body>

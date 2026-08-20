@@ -14,7 +14,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from gmail_client import GmailClient, SUBSCRIPTION_QUERIES
-from parser import extract_dates
+from filters import is_likely_subscription
+from parser import extract_price, extract_dates, extract_status, extract_provider
 from normalize import normalize_provider
 from llm_extractor import classify_and_extract
 
@@ -25,13 +26,10 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 # SEARCH_AFTER_DATE (format YYYY/MM/DD) as an env var to limit the scan
 # to recent history instead — useful for large/old inboxes where a full
 # scan would be slow or costly on API quota.
-SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "")
+SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "").strip()
 
 # Max messages fetched PER search query (there are 4 queries, so total
-# possible messages fetched is up to 4x this, before dedup). Gmail API
-# itself has no hard upper bound; this is a safety cap so a single scan
-# can't run unboundedly long. Override via MAX_RESULTS_PER_QUERY if a
-# very large mailbox needs a higher ceiling.
+# possible messages fetched is up to 4x this, before dedup).
 MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "500"))
 
 
@@ -49,18 +47,46 @@ class Row:
 
 
 def get_body_text(payload) -> str:
-    parts = payload.get("parts", [payload])
-    for part in parts:
-        if part.get("mimeType") == "text/plain":
-            data = part["body"].get("data", "")
-            if data:
-                return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
-        if part.get("mimeType") == "text/html":
-            data = part["body"].get("data", "")
-            if data:
-                html = base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+    """
+    Recursively traverses Gmail's MIME payload structure (multipart/mixed,
+    multipart/related, multipart/alternative, text/html, text/plain) to extract
+    the best available readable text content.
+    """
+    if not payload:
+        return ""
+
+    def _extract(part):
+        mime_type = part.get("mimeType", "")
+        body_data = part.get("body", {}).get("data", "")
+
+        if mime_type == "text/plain" and body_data:
+            try:
+                return base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+
+        if mime_type == "text/html" and body_data:
+            try:
+                html = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
                 return BeautifulSoup(html, "html.parser").get_text(" ")
-    return ""
+            except Exception:
+                pass
+
+        subparts = part.get("parts", [])
+        extracted_plain = ""
+        extracted_html = ""
+        for sub in subparts:
+            text = _extract(sub)
+            if text:
+                if sub.get("mimeType") == "text/plain":
+                    extracted_plain = text
+                elif not extracted_html:
+                    extracted_html = text
+
+        return extracted_plain or extracted_html or ""
+
+    text = _extract(payload)
+    return text.strip() if text else ""
 
 
 def _parse_email_date(date_str: str):
@@ -78,14 +104,7 @@ def merge_to_current_subscriptions(rows: list) -> list:
     """
     Collapses multiple emails from the same provider (e.g. 12 monthly
     Netflix receipts) into a single row representing that subscription's
-    CURRENT state, then keeps only subscriptions whose latest known
-    status is "active" — free trials that never converted and anything
-    canceled are dropped from the result.
-
-    "Current state" is determined by the chronologically most recent
-    matching email for that provider, not the most recent extracted
-    date within the email body (which can be unreliable — e.g. a body
-    mentioning a future renewal date).
+    CURRENT state. Excludes subscriptions whose latest status is canceled/expired.
     """
     groups = defaultdict(list)
     for row in rows:
@@ -97,8 +116,9 @@ def merge_to_current_subscriptions(rows: list) -> list:
         earliest = group[0]
         latest = group[-1]
 
-        if latest.status != "active":
-            continue  # drop canceled and trial-only subscriptions
+        status = (latest.status or "").strip().lower()
+        if status in ("canceled", "cancelled", "expired"):
+            continue  # drop canceled and expired subscriptions
 
         merged.append(Row(
             provider=provider,
@@ -107,7 +127,7 @@ def merge_to_current_subscriptions(rows: list) -> list:
             amount=latest.amount,
             currency=latest.currency,
             reason=latest.reason,
-            status=latest.status,
+            status=status if status else "active",
             source_email_subject=latest.source_email_subject,
             source_email_date=latest.source_email_date,
         ))
@@ -125,6 +145,9 @@ def run_pipeline(
     rows = []
     seen_ids = set()
 
+    search_after = (search_after or "").strip()
+    search_before = (search_before or "").strip()
+
     all_msg_ids = []
     for query in SUBSCRIPTION_QUERIES:
         full_query = query
@@ -138,35 +161,62 @@ def run_pipeline(
                 seen_ids.add(msg_id)
                 all_msg_ids.append(msg_id)
 
+    print(f"[llm_pipeline] Found {len(all_msg_ids)} unique candidate messages. Fetching & analyzing...")
+
     for msg_id, msg in client.get_messages_batch(all_msg_ids):
-        headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
+        headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
         subject = headers.get("Subject", "")
         sender = headers.get("From", "")
-        body = get_body_text(msg["payload"])
+        body = get_body_text(msg.get("payload", {}))
+        snippet = msg.get("snippet", "")
+        effective_body = body if body else snippet
 
-        result = classify_and_extract(subject, sender, body)
-        if not result or not result.get("is_subscription"):
-            continue
+        # Primary extraction using Gemini LLM
+        result = classify_and_extract(subject, sender, effective_body)
 
-        # Skip low-confidence classifications rather than including
-        # uncertain guesses in a client-facing report.
-        if result.get("confidence", 1.0) < 0.6:
-            continue
+        # If LLM succeeded and gave a verdict
+        if result is not None:
+            if not result.get("is_subscription"):
+                continue
+            if result.get("confidence", 1.0) < 0.6:
+                continue
 
-        dates = extract_dates(body)
-        raw_provider = result.get("provider") or sender.split("<")[0].strip()
-        provider = normalize_provider(raw_provider, sender)
+            dates = extract_dates(effective_body)
+            raw_provider = result.get("provider") or sender.split("<")[0].strip()
+            provider = normalize_provider(raw_provider, sender)
+            status = str(result.get("status") or "active").strip().lower()
 
-        rows.append(Row(
-            provider=provider,
-            start_date=str(dates[0]) if dates else "",
-            end_date=str(dates[-1]) if dates else "",
-            amount=result.get("amount") or 0.0,
-            currency=result.get("currency") or "",
-            reason=result.get("reason") or "unknown",
-            status=result.get("status") or "active",
-            source_email_subject=subject,
-            source_email_date=headers.get("Date", ""),
-        ))
+            rows.append(Row(
+                provider=provider,
+                start_date=str(dates[0]) if dates else "",
+                end_date=str(dates[-1]) if dates else "",
+                amount=float(result.get("amount") or 0.0),
+                currency=result.get("currency") or "",
+                reason=result.get("reason") or "unknown",
+                status=status,
+                source_email_subject=subject,
+                source_email_date=headers.get("Date", ""),
+            ))
+        else:
+            # Fallback heuristic parser when LLM is unavailable or returns an error
+            if is_likely_subscription(subject, snippet, effective_body, sender):
+                amount, currency = extract_price(f"{subject} {effective_body}")
+                dates = extract_dates(effective_body)
+                status = extract_status(f"{subject} {effective_body}")
+                sender_name = sender.split("<")[0].strip()
+                raw_provider = extract_provider(sender, sender_name)
+                provider = normalize_provider(raw_provider, sender)
+
+                rows.append(Row(
+                    provider=provider,
+                    start_date=str(dates[0]) if dates else "",
+                    end_date=str(dates[-1]) if dates else "",
+                    amount=float(amount or 0.0),
+                    currency=currency or "",
+                    reason="unknown",
+                    status=status,
+                    source_email_subject=subject,
+                    source_email_date=headers.get("Date", ""),
+                ))
 
     return merge_to_current_subscriptions(rows)

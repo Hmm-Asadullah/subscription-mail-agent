@@ -10,21 +10,18 @@ SUBSCRIPTION_QUERIES = [
     # phrases, so variations in real-world subject lines still match.
     'subject:(subscription OR renewal OR renew OR "auto-renew" OR "auto renew" '
     'OR membership OR "trial ending" OR "trial ends" OR "billing cycle") '
-    '-category:social -category:promotions',
+    '-category:social',
 
     # Generic payment/billing subject terms. Broader than before, but the
     # one-time-purchase false positives this can catch (e.g. a single
-    # Amazon order receipt) are handled downstream by the classifier,
-    # not by narrowing the search itself — narrowing the search is what
-    # was causing real subscriptions to be missed entirely.
+    # Amazon order receipt) are handled downstream by the classifier.
     'subject:(receipt OR invoice OR "payment confirmation" OR "payment successful" '
     'OR "payment received" OR "your bill" OR "billing statement") '
-    '-category:social -category:promotions',
+    '-category:social',
 
     # Known major subscription providers, searched by sender domain rather
     # than subject wording — catches real subscriptions regardless of how
-    # that specific provider phrases their subject line. Extend this list
-    # with any provider you know your client is likely subscribed to.
+    # that specific provider phrases their subject line.
     'from:(netflix.com OR spotify.com OR adobe.com OR amazon.com OR disneyplus.com '
     'OR youtube.com OR microsoft.com OR dropbox.com OR apple.com OR hulu.com '
     'OR hbomax.com OR playstation.com OR github.com OR google.com OR icloud.com '
@@ -75,7 +72,7 @@ SUBSCRIPTION_QUERIES = [
 
     # Known billing-system sender address patterns.
     'from:(billing@ OR receipts@ OR invoices@ OR subscriptions@) '
-    '-category:social -category:promotions',
+    '-category:social',
 ]
 
 

@@ -178,21 +178,31 @@ def run_scan():
 
     # HTML date inputs submit as YYYY-MM-DD; Gmail's search syntax expects
     # YYYY/MM/DD. Both fields are optional.
-    start_date = request.form.get("start_date", "").replace("-", "/")
-    end_date = request.form.get("end_date", "").replace("-", "/")
+    raw_start = request.form.get("start_date", "").strip()
+    raw_end = request.form.get("end_date", "").strip()
+    start_date = raw_start.replace("-", "/") if raw_start else ""
+    end_date = raw_end.replace("-", "/") if raw_end else ""
 
-    rows = run_pipeline(creds, search_after=start_date, search_before=end_date)
-
-    sid = get_session_id()
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    csv_path = os.path.join(OUTPUT_DIR, f"{sid}.csv")
-    export_csv(rows, csv_path)
-    SCAN_CACHE[sid] = {"rows": rows, "csv_path": csv_path}
+    error_msg = None
+    try:
+        rows = run_pipeline(creds, search_after=start_date, search_before=end_date)
+        sid = get_session_id()
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        csv_path = os.path.join(OUTPUT_DIR, f"{sid}.csv")
+        export_csv(rows, csv_path)
+        SCAN_CACHE[sid] = {"rows": rows, "csv_path": csv_path}
+    except Exception as e:
+        print(f"[web_app] Error during scan: {e}")
+        rows = []
+        error_msg = f"Scan error: {str(e)}"
 
     return render_template(
-        "dashboard.html", connected=True, rows=rows,
-        start_date=request.form.get("start_date", ""),
-        end_date=request.form.get("end_date", ""),
+        "dashboard.html",
+        connected=True,
+        rows=rows,
+        error=error_msg,
+        start_date=raw_start,
+        end_date=raw_end,
     )
 
 
