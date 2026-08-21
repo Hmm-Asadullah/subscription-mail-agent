@@ -27,6 +27,13 @@ EXCLUDE_MARKERS = {
     "limited time offer", "limited time only", "get pro", "upgrade to pro",
     "upgrade now", "unlock premium", "try premium", "invest yourself",
     "off annual", "off premium", "% off", "off your next",
+    # Generic payment / bank / P2P / wallet notifications:
+    "you sent", "you received", "payment sent", "payment received from",
+    "money sent", "money received", "transfer complete", "transfer successful",
+    "transaction confirmed", "transaction alert", "transaction notification",
+    "account statement", "bank statement", "wallet top-up", "balance update",
+    "payment is due", "payment overdue", "due date reminder", "amount due",
+    "your payment of", "payment reminder", "payment due",
 }
 
 # Strong phrases that appear in actual RECURRING paid billing emails.
