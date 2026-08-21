@@ -31,28 +31,29 @@ client = genai.Client(api_key=API_KEY)
 
 # Model configuration with fallback list in case of temporary provider spike/deprecation
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.7-flash", "gemini-flash-latest"]
+FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 SYSTEM_PROMPT = """You are a strict and precise email classifier and data extractor for active paid recurring subscriptions.
 
 Your goal is to ONLY identify emails confirming that the user has been BILLED or CHARGED for an ACTIVE RECURRING SUBSCRIPTION (monthly, yearly, or weekly).
 
-STRICT RULES:
-1. ONLY return "is_subscription": true if:
-   - The email is an actual RECEIPT, INVOICE, or BILLING CONFIRMATION for an active, paid recurring service (e.g., SaaS tools, software, streaming, cloud services, recurring paid memberships).
+CRITICAL DISTINCTION: SUBSCRIPTION INVOICES vs. CLIENT / FREELANCE / ONE-OFF INVOICES:
+1. ONLY return "is_subscription": true for:
+   - Automated recurring subscription invoices, receipts, or renewal confirmations for software (SaaS), cloud infrastructure, streaming, tools, hosting, domain renewals, or memberships (e.g., OpenAI, GitHub, AWS, Adobe, Spotify, Netflix, Zoom, Google Workspace, Slack).
+   - Invoices that have an explicit recurring cadence (monthly, yearly, weekly) and represent an ongoing service plan or platform license.
    - The email confirms an actual non-zero payment or charge was billed (amount > 0).
-   - The billing cadence is recurring (monthly, yearly, weekly).
 
-2. ALWAYS return "is_subscription": false (and provider: null, amount: null, status: null) for ANY of the following:
+2. ALWAYS return "is_subscription": false (and provider: null, amount: null, status: null) for:
+   - CLIENT / FREELANCE / ONE-OFF INVOICES: Invoices for freelance work, consulting services, custom project development, milestone payments, hourly labor, design work, contractor bills, legal/accounting fees, or manual client billing (e.g., "Invoice for Web Development", "Milestone 1 Payment", "Design Sprint Invoice", "Hours worked: 40h @ $50/hr", "Invoice for services rendered").
+   - One-time purchases, single retail orders, restaurant/food deliveries, hardware/electronics purchases, travel/hotel/ticket bookings.
    - Free trials, trial ending notices, trial expiration notices (e.g. "Your Free Trial", "Trial Ends Tomorrow").
    - Cancellation notices, deactivation notices, account suspensions, expiration notices (e.g. "subscription is being deactivated", "cancellation confirmed", "subscription expired").
    - Marketing emails, newsletters, product promotions, discount offers, tips (e.g. Grammarly tips/promotions, upgrade discounts, feature announcements, even if they mention prices).
-   - One-time purchases, single retail orders, restaurant/food orders, one-off utility bills, single invoice payments.
    - $0.00 / Free tier notifications / zero-amount notices.
 
 3. STATUS:
    - Must be "active" for ongoing, currently-paid subscriptions.
-   - If the subscription is canceled, deactivated, expired, or a trial, "is_subscription" MUST be false.
+   - If the subscription is canceled, deactivated, expired, a trial, or a one-time/client invoice, "is_subscription" MUST be false.
 
 Respond with ONLY a JSON object matching this exact schema:
 {
@@ -126,5 +127,5 @@ def classify_and_extract(subject: str, sender: str, body: str) -> dict | None:
             last_error = e
             continue
 
-    print(f"[llm_extractor] Failed to classify email ({subject!r}): {last_error}")
+    print(f"[llm_extractor] Failed to classify email ({ascii(subject)}): {last_error}")
     return None

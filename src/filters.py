@@ -18,6 +18,15 @@ EXCLUDE_MARKERS = {
     "subscription ended", "membership expired", "plan expired",
     "unsubscribe from this newsletter", "weekly digest",
     "manage your email preferences", "tips & tricks", "more clarity, more confidence",
+    "milestone payment", "hours worked", "hourly rate", "project invoice",
+    "consulting invoice", "freelance invoice", "statement of work",
+    "services rendered", "scope of work", "contract work",
+    # Promotional / discount / marketing offer markers:
+    "deal ends", "deal ends today", "black friday", "cyber monday",
+    "use code", "promo code", "coupon code", "discount", "special offer",
+    "limited time offer", "limited time only", "get pro", "upgrade to pro",
+    "upgrade now", "unlock premium", "try premium", "invest yourself",
+    "off annual", "off premium", "% off", "off your next",
 }
 
 # Strong phrases that appear in actual RECURRING paid billing emails.
@@ -30,11 +39,9 @@ STRONG_PAID_PHRASES = {
 
 # Keywords indicating billing or subscription context
 BILLING_KEYWORDS = {
-    "subscription", "renewal", "renewed", "auto-renew", "auto renew",
-    "recurring payment", "recurring billing", "billing cycle",
-    "your plan renews", "membership renewal", "subscription plan",
-    "monthly plan", "annual plan", "yearly plan", "monthly", "annual",
-    "membership", "payment confirmation", "payment received",
+    "subscription renewed", "renewal confirmation", "recurring payment",
+    "recurring billing", "billing cycle", "your plan renews",
+    "membership renewal", "payment confirmation", "payment received",
     "invoice", "receipt", "billed", "confirmación de pago", "rechnung",
 }
 
@@ -45,7 +52,7 @@ def is_likely_subscription(subject: str, snippet: str, body_text: str, sender: s
     text = f"{subject} {snippet} {body_text}".lower()
     sender_lower = (sender or "").lower()
 
-    # Drop immediately if negative/cancellation/trial/deactivation phrases are found
+    # Drop immediately if negative/cancellation/trial/deactivation/promo phrases are found
     if any(marker in text for marker in EXCLUDE_MARKERS):
         return False
 
@@ -54,12 +61,13 @@ def is_likely_subscription(subject: str, snippet: str, body_text: str, sender: s
     if not has_price:
         return False
 
-    # Known provider with a price and no exclusion markers is a match
+    # Must contain strong paid phrase or billing keyword confirming a charge/renewal
+    has_billing_kw = any(kw in text for kw in BILLING_KEYWORDS) or any(phrase in text for phrase in STRONG_PAID_PHRASES)
+    if not has_billing_kw:
+        return False
+
+    # Known provider with verified billing context
     if any(domain in sender_lower or domain in text for domain in PROVIDER_ALIASES):
         return True
 
-    # Strong recurring billing phrase or keyword with price
-    if any(phrase in text for phrase in STRONG_PAID_PHRASES):
-        return True
-
-    return any(kw in text for kw in BILLING_KEYWORDS)
+    return True

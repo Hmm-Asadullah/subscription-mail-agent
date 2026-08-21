@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from llm_extractor import classify_and_extract
 from llm_pipeline import get_body_text, merge_to_current_subscriptions, Row
+from filters import is_likely_subscription
 
 
 class TestLLMPipeline(unittest.TestCase):
@@ -110,13 +111,81 @@ class TestLLMPipeline(unittest.TestCase):
 
         # 3. Marketing email
         res3 = classify_and_extract(
-            "More clarity, more confidence, less effort 💎",
+            "More clarity, more confidence, less effort",
             "Grammarly <info@send.grammarly.com>",
             "Unlock Premium for $72.00/year to get writing suggestions and clarity."
         )
         self.assertIsNotNone(res3)
         self.assertFalse(res3.get("is_subscription"))
 
+        # 4. LeetCode discount/deal email
+        res4 = classify_and_extract(
+            "Deal Ends Today - $40 off Annual Premium",
+            "LeetCode <no-reply@leetcode.com>",
+            "The $40 off on our Annual Premium Subscription is extended for one day! Use code THANKS2025 at checkout. Offer ends at 11:59pm."
+        )
+        self.assertIsNotNone(res4)
+        self.assertFalse(res4.get("is_subscription"))
+
+        # 5. Grammarly promo offer
+        res5 = classify_and_extract(
+            "Sound more confident, even under pressure",
+            "Grammarly <info@send.grammarly.com>",
+            "Writing under pressure? Don't let the clock run out on this deal. Pro is 50% off for a limited time only. [Get Pro]"
+        )
+        self.assertIsNotNone(res5)
+        self.assertFalse(res5.get("is_subscription"))
+
+    def test_rejection_of_client_and_freelance_invoices(self):
+        # 1. Freelance milestone invoice
+        res1 = classify_and_extract(
+            "Invoice #1042 for Web App Development Milestone 2",
+            "John Doe <john@freelanceagency.io>",
+            "Hi Asad,\n\nPlease find attached Invoice #1042 for Milestone 2: Backend API Integration.\nTotal Due: $1,250.00.\nDue by March 15 via wire transfer.\n\nThank you,\nJohn"
+        )
+        self.assertIsNotNone(res1)
+        self.assertFalse(res1.get("is_subscription"))
+
+        # 2. Hourly consulting services invoice
+        res2 = classify_and_extract(
+            "Invoice for Consulting Services - July 2026",
+            "Accounting <billing@clientpartner.com>",
+            "Invoice #INV-2026-07\nServices Rendered: 25 hours consulting @ $80/hr\nTotal Amount: $2,000.00\nPayment terms: Net 30"
+        )
+        self.assertIsNotNone(res2)
+        self.assertFalse(res2.get("is_subscription"))
+
+    def test_acceptance_of_recurring_subscription_invoice(self):
+        # Automated recurring subscription invoice for SaaS/Cloud platform
+        res = classify_and_extract(
+            "Your GitHub Pro monthly invoice is available",
+            "GitHub Billing <billing@github.com>",
+            "Your monthly subscription invoice for GitHub Pro is ready. We billed $4.00 to your card ending in 1234 for the billing period Mar 1 - Mar 31. Next payment date: Apr 1."
+        )
+        self.assertIsNotNone(res)
+        self.assertTrue(res.get("is_subscription"))
+        self.assertEqual(res.get("status"), "active")
+        self.assertAlmostEqual(float(res.get("amount") or 0), 4.00)
+
+
+    def test_heuristic_filter_rejects_promos(self):
+        # LeetCode $40 off deal
+        self.assertFalse(is_likely_subscription(
+            "🔔 Deal Ends Today - $40 off Annual Premium",
+            "The $40 off on our Annual Premium Subscription is extended for one day!",
+            "Use code THANKS2025 at checkout. What You Get with LeetCode Premium: Unlock questions. Invest yourself!",
+            "LeetCode Team <no-reply@leetcode.com>"
+        ))
+
+        # Grammarly promo
+        self.assertFalse(is_likely_subscription(
+            "Sound more confident, even under pressure 💪",
+            "Give your deadlines new lifelines",
+            "Don't let the clock run out on this deal. Pro is 50% off for a limited time only. [Get Pro]",
+            "Grammarly <info@send.grammarly.com>"
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()
+
