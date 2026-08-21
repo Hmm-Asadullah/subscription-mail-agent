@@ -9,12 +9,13 @@ import base64
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from gmail_client import GmailClient, SUBSCRIPTION_QUERIES
-from filters import is_likely_subscription
+from filters import is_likely_subscription, EXCLUDE_MARKERS
 from parser import extract_price, extract_dates, extract_status, extract_provider
 from normalize import normalize_provider
 from llm_extractor import classify_and_extract
@@ -138,6 +139,84 @@ def merge_to_current_subscriptions(rows: list) -> list:
     return merged
 
 
+def _process_single_message(item) -> Row | None:
+    msg_id, msg = item
+    headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    subject = headers.get("Subject", "")
+    sender = headers.get("From", "")
+    body = get_body_text(msg.get("payload", {}))
+    snippet = msg.get("snippet", "")
+    effective_body = body if body else snippet
+
+    # Fast pre-filtering: Skip obvious cancellations, trials, newsletters, or marketing offers
+    full_lower = f"{subject} {snippet} {effective_body}".lower()
+    if any(marker in full_lower for marker in EXCLUDE_MARKERS):
+        return None
+
+    # Primary extraction using Gemini LLM
+    result = classify_and_extract(subject, sender, effective_body)
+
+    # If LLM succeeded and gave a verdict
+    if result is not None:
+        if not result.get("is_subscription"):
+            return None
+        if result.get("confidence", 1.0) < 0.6:
+            return None
+
+        status = str(result.get("status") or "").strip().lower()
+        if status != "active":
+            return None
+
+        amount = float(result.get("amount") or 0.0)
+        if amount <= 0.0:
+            return None
+
+        dates = extract_dates(effective_body)
+        raw_provider = result.get("provider") or sender.split("<")[0].strip()
+        provider = normalize_provider(raw_provider, sender)
+
+        return Row(
+            provider=provider,
+            start_date=str(dates[0]) if dates else "",
+            end_date=str(dates[-1]) if dates else "",
+            amount=amount,
+            currency=result.get("currency") or "USD",
+            reason=result.get("reason") or "subscription",
+            status="active",
+            source_email_subject=subject,
+            source_email_date=headers.get("Date", ""),
+        )
+    else:
+        # Fallback heuristic parser when LLM is unavailable or offline
+        if is_likely_subscription(subject, snippet, effective_body, sender):
+            amount, currency = extract_price(f"{subject} {effective_body}")
+            if not amount or amount <= 0.0:
+                return None
+
+            status = extract_status(f"{subject} {effective_body}")
+            if status != "active":
+                return None
+
+            dates = extract_dates(effective_body)
+            sender_name = sender.split("<")[0].strip()
+            raw_provider = extract_provider(sender, sender_name)
+            provider = normalize_provider(raw_provider, sender)
+
+            return Row(
+                provider=provider,
+                start_date=str(dates[0]) if dates else "",
+                end_date=str(dates[-1]) if dates else "",
+                amount=float(amount),
+                currency=currency or "USD",
+                reason="subscription",
+                status="active",
+                source_email_subject=subject,
+                source_email_date=headers.get("Date", ""),
+            )
+
+    return None
+
+
 def run_pipeline(
     creds,
     search_after: str = SEARCH_AFTER,
@@ -166,73 +245,12 @@ def run_pipeline(
 
     print(f"[llm_pipeline] Found {len(all_msg_ids)} unique candidate messages. Fetching & analyzing...")
 
-    for msg_id, msg in client.get_messages_batch(all_msg_ids):
-        headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
-        subject = headers.get("Subject", "")
-        sender = headers.get("From", "")
-        body = get_body_text(msg.get("payload", {}))
-        snippet = msg.get("snippet", "")
-        effective_body = body if body else snippet
+    fetched_messages = list(client.get_messages_batch(all_msg_ids))
+    print(f"[llm_pipeline] Fetched {len(fetched_messages)} messages. Processing concurrently...")
 
-        # Primary extraction using Gemini LLM
-        result = classify_and_extract(subject, sender, effective_body)
-
-        # If LLM succeeded and gave a verdict
-        if result is not None:
-            if not result.get("is_subscription"):
-                continue
-            if result.get("confidence", 1.0) < 0.6:
-                continue
-
-            status = str(result.get("status") or "").strip().lower()
-            if status != "active":
-                continue
-
-            amount = float(result.get("amount") or 0.0)
-            if amount <= 0.0:
-                continue
-
-            dates = extract_dates(effective_body)
-            raw_provider = result.get("provider") or sender.split("<")[0].strip()
-            provider = normalize_provider(raw_provider, sender)
-
-            rows.append(Row(
-                provider=provider,
-                start_date=str(dates[0]) if dates else "",
-                end_date=str(dates[-1]) if dates else "",
-                amount=amount,
-                currency=result.get("currency") or "USD",
-                reason=result.get("reason") or "subscription",
-                status="active",
-                source_email_subject=subject,
-                source_email_date=headers.get("Date", ""),
-            ))
-        else:
-            # Fallback heuristic parser when LLM is unavailable or offline
-            if is_likely_subscription(subject, snippet, effective_body, sender):
-                amount, currency = extract_price(f"{subject} {effective_body}")
-                if not amount or amount <= 0.0:
-                    continue
-
-                status = extract_status(f"{subject} {effective_body}")
-                if status != "active":
-                    continue
-
-                dates = extract_dates(effective_body)
-                sender_name = sender.split("<")[0].strip()
-                raw_provider = extract_provider(sender, sender_name)
-                provider = normalize_provider(raw_provider, sender)
-
-                rows.append(Row(
-                    provider=provider,
-                    start_date=str(dates[0]) if dates else "",
-                    end_date=str(dates[-1]) if dates else "",
-                    amount=float(amount),
-                    currency=currency or "USD",
-                    reason="subscription",
-                    status="active",
-                    source_email_subject=subject,
-                    source_email_date=headers.get("Date", ""),
-                ))
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for row in executor.map(_process_single_message, fetched_messages):
+            if row is not None:
+                rows.append(row)
 
     return merge_to_current_subscriptions(rows)
