@@ -23,15 +23,18 @@ from llm_extractor import classify_and_extract
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-# If unset, scans the ENTIRE mailbox with no date cutoff. Set
-# SEARCH_AFTER_DATE (format YYYY/MM/DD) as an env var to limit the scan
-# to recent history instead — useful for large/old inboxes where a full
-# scan would be slow or costly on API quota.
-SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", "").strip()
+import datetime
+
+# Default: scan only the last 2 years to keep scans fast.
+# Override by setting SEARCH_AFTER_DATE (format YYYY/MM/DD) as an env var,
+# or by passing a date from the web UI.
+_two_years_ago = (datetime.date.today() - datetime.timedelta(days=730)).strftime("%Y/%m/%d")
+SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", _two_years_ago).strip()
 
 # Max messages fetched PER search query (there are 4 queries, so total
 # possible messages fetched is up to 4x this, before dedup).
-MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "500"))
+# Default 50 keeps scans fast (~5-10s). Override via env var for deeper historical scans.
+MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "50"))
 
 
 @dataclass

@@ -25,7 +25,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from cryptography.fernet import Fernet
 
-from llm_pipeline import run_pipeline
+from llm_pipeline import run_pipeline, MAX_RESULTS_PER_QUERY
 from export import export_csv
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -185,7 +185,7 @@ def run_scan():
 
     error_msg = None
     try:
-        rows = run_pipeline(creds, search_after=start_date, search_before=end_date)
+        rows = run_pipeline(creds, search_after=start_date, search_before=end_date, max_results=MAX_RESULTS_PER_QUERY)
         sid = get_session_id()
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         csv_path = os.path.join(OUTPUT_DIR, f"{sid}.csv")
