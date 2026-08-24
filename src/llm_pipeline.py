@@ -33,9 +33,10 @@ SEARCH_AFTER = os.environ.get("SEARCH_AFTER_DATE", _two_years_ago).strip()
 
 # Max messages fetched PER search query (there are 4 queries, so total
 # possible messages fetched is up to 4x this, before dedup).
-# Default 100 balances speed (~10-15s) with coverage (4 queries × 100 = 400 max, ~100-150 unique after dedup).
-# Override via env var: set MAX_RESULTS_PER_QUERY=500 for a deep full-history scan.
-MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "100"))
+# Default 50 keeps scan fast and below Gmail's per-user rate limit.
+# With batch_size=10 in gmail_client.py, 50 messages = 5 batch calls with 0.3s pauses = ~2s fetch time.
+# Override via env var: MAX_RESULTS_PER_QUERY=100 for a deeper scan.
+MAX_RESULTS_PER_QUERY = int(os.environ.get("MAX_RESULTS_PER_QUERY", "50"))
 
 
 @dataclass

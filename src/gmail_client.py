@@ -2,6 +2,8 @@
 Wraps the Gmail API for searching messages and fetching full message content.
 """
 
+import time
+
 from googleapiclient.discovery import build
 from tenacity import retry, wait_exponential, stop_after_attempt
 
@@ -99,12 +101,12 @@ class GmailClient:
             userId="me", id=msg_id, format="full"
         ).execute()
 
-    def get_messages_batch(self, msg_ids: list, batch_size: int = 100):
+    def get_messages_batch(self, msg_ids: list, batch_size: int = 10):
         """
-        Fetches many messages using Gmail's batch HTTP endpoint instead of
-        one request per message. Yields (msg_id, message_dict) pairs as
-        they complete. Failed individual requests are logged and skipped
-        rather than aborting the whole batch.
+        Fetches many messages using Gmail's batch HTTP endpoint.
+        batch_size is deliberately kept small (10) to avoid hitting Gmail's
+        "Too many concurrent requests for user" 429 limit. A short sleep
+        between chunks further reduces rate-limit pressure.
         """
         results = {}
         errors = {}
@@ -135,3 +137,7 @@ class GmailClient:
 
             results.clear()
             errors.clear()
+
+            # Small pause between chunks to avoid Gmail rate-limit (429)
+            if i + batch_size < len(msg_ids):
+                time.sleep(0.3)
