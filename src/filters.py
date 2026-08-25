@@ -52,7 +52,37 @@ BILLING_KEYWORDS = {
     "invoice", "receipt", "billed", "confirmación de pago", "rechnung",
 }
 
-PRICE_HINT_RE = re.compile(r"[$€£¥]\s?\d+(?:\.\d{2})?|\d+(?:\.\d{2})?\s?(?:usd|eur|gbp)", re.IGNORECASE)
+# Comprehensive price-hint regex. Intentionally broad — false positives
+# here just mean an extra LLM call; false negatives mean a missed subscription.
+#
+# Covers:
+#   Currency symbols before number : $9.99  €10  £5  ¥1000  ₹499  ₩9900
+#   ISO codes before/after number  : USD 9.99  9.99 USD  CAD 12.99  PKR 1499
+#   Comma-formatted amounts        : $1,299.00  1.299,00 EUR
+#   Whole-number amounts           : $10  €5
+#   Period-suffixed amounts        : 9.99/mo  9.99/month  9.99/yr  9.99/year
+#   Plain decimals in billing ctx  : 9.99 (matched only with /mo|/month suffix)
+_CURRENCY_SYMBOLS = r"[$€£¥₹₩₪₪₺₿]"
+_CURRENCY_CODES = (
+    r"usd|eur|gbp|cad|aud|inr|pkr|mxn|brl|chf|sek|nok|dkk|"
+    r"sgd|hkd|jpy|krw|czk|pln|huf|ron|try|aed|sar|qar|ngn|"
+    r"zar|php|myr|idr|thb|vnd|cop|ars|pen|clp|egp|ils"
+)
+_AMOUNT = r"\d{1,3}(?:[,.\s]\d{3})*(?:[.,]\d{1,2})?"  # handles 1,299.00 / 1.299,00 / 1299
+
+PRICE_HINT_RE = re.compile(
+    r"(?:"
+    # Symbol before amount: $9.99 / €1,299.00
+    rf"{_CURRENCY_SYMBOLS}\s?{_AMOUNT}"
+    # ISO code before amount: USD 9.99 / PKR 1,499
+    rf"|(?:{_CURRENCY_CODES})\s?{_AMOUNT}"
+    # Amount before ISO code: 9.99 USD / 12.99 EUR
+    rf"|{_AMOUNT}\s?(?:{_CURRENCY_CODES})"
+    # Amount with billing-period suffix (no symbol needed): 9.99/mo
+    rf"|{_AMOUNT}\s?/\s?(?:mo|month|yr|year|week|wk)(?:\b|ly)"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def is_likely_subscription(subject: str, snippet: str, body_text: str, sender: str = "") -> bool:

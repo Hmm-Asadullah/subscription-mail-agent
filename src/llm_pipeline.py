@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from gmail_client import GmailClient, SUBSCRIPTION_QUERIES
-from filters import is_likely_subscription, EXCLUDE_MARKERS, PRICE_HINT_RE
+from filters import is_likely_subscription, EXCLUDE_MARKERS, PRICE_HINT_RE, STRONG_PAID_PHRASES
 from parser import extract_price, extract_dates, extract_status, extract_provider
 from normalize import normalize_provider
 from llm_extractor import classify_and_extract
@@ -160,9 +160,12 @@ def _process_single_message(item) -> Row | None:
     if any(marker in full_lower for marker in EXCLUDE_MARKERS):
         return None
 
-    # Cheap price check — if there's no currency symbol or amount anywhere,
-    # skip the LLM call entirely (saves ~1-2s per message).
-    if not PRICE_HINT_RE.search(full_lower):
+    # Cheap price check — skip the LLM if there's no detectable price anywhere.
+    # BYPASS: if a strong billing phrase is present (e.g. "subscription renewed",
+    # "billed for your subscription"), always let the LLM decide — the amount
+    # might be in an image, a table cell, or buried in HTML we couldn't parse.
+    has_strong_phrase = any(phrase in full_lower for phrase in STRONG_PAID_PHRASES)
+    if not has_strong_phrase and not PRICE_HINT_RE.search(full_lower):
         return None
 
     # Primary extraction using Gemini LLM
