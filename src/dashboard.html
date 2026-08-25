@@ -59,7 +59,10 @@
                 </div>
                 <p class="hint">Leave both blank to scan your entire mailbox.</p>
                 <div class="actions">
-                    <button class="btn" type="submit">Run scan</button>
+                    <button class="btn" type="submit" id="run-btn"
+                            onclick="this.disabled=true;this.textContent='Starting scan…';this.closest('form').submit()">
+                        Run scan
+                    </button>
                     {% if rows %}
                         <a class="btn btn-secondary" href="{{ url_for('download') }}">Download CSV</a>
                     {% endif %}

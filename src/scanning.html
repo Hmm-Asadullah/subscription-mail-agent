@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanning your inbox…</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 32px;
+            padding: 20px;
+        }
+
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 48px 56px;
+            text-align: center;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.4);
+        }
+
+        /* Spinner */
+        .spinner-wrap {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 32px;
+        }
+
+        .spinner {
+            width: 56px;
+            height: 56px;
+            border: 4px solid #334155;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        h1 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            line-height: 1.5;
+            margin-bottom: 28px;
+        }
+
+        /* Animated dots */
+        .dots::after {
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%   { content: ''; }
+            25%  { content: '.'; }
+            50%  { content: '..'; }
+            75%  { content: '...'; }
+            100% { content: ''; }
+        }
+
+        /* Progress bar */
+        .progress-track {
+            background: #0f172a;
+            border-radius: 99px;
+            height: 6px;
+            overflow: hidden;
+            margin-bottom: 28px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+            border-radius: 99px;
+            width: 15%;
+            animation: progress-indeterminate 1.6s ease-in-out infinite;
+            transform-origin: left center;
+        }
+
+        @keyframes progress-indeterminate {
+            0%   { transform: translateX(-100%) scaleX(0.5); }
+            50%  { transform: translateX(100%) scaleX(1.5); }
+            100% { transform: translateX(300%) scaleX(0.5); }
+        }
+
+        .status-text {
+            font-size: 0.82rem;
+            color: #64748b;
+        }
+
+        /* Error state (hidden by default) */
+        .error-box {
+            display: none;
+            background: #450a0a;
+            border: 1px solid #991b1b;
+            color: #fca5a5;
+            padding: 14px 18px;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            text-align: left;
+            margin-top: 20px;
+        }
+
+        .error-box.visible { display: block; }
+
+        .btn-home {
+            display: none;
+            margin-top: 20px;
+            padding: 10px 22px;
+            background: #6366f1;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .btn-home:hover { background: #4f46e5; }
+        .btn-home.visible { display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="spinner-wrap">
+            <div class="spinner" id="spinner"></div>
+        </div>
+
+        <h1>Scanning your inbox<span class="dots"></span></h1>
+        <p class="subtitle">
+            We're searching for subscription emails and extracting billing details.
+            This usually takes 30–90 seconds depending on your inbox size.
+        </p>
+
+        <div class="progress-track">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <p class="status-text" id="status-text">Connecting to Gmail API…</p>
+
+        <div class="error-box" id="error-box"></div>
+        <a class="btn-home" id="btn-home" href="/">← Back to home</a>
+    </div>
+
+    <script>
+        const JOB_ID = {{ job_id | tojson }};
+        const STATUS_URL = `/status/${JOB_ID}`;
+        const RESULTS_URL = `/results/${JOB_ID}`;
+
+        let elapsed = 0;
+        const STATUS_MESSAGES = [
+            [0,  "Connecting to Gmail API…"],
+            [5,  "Searching for subscription emails…"],
+            [15, "Fetching email content in batches…"],
+            [30, "Analysing emails with AI…"],
+            [55, "Filtering & deduplicating results…"],
+            [75, "Almost done — finalising report…"],
+        ];
+
+        function getStatusMessage(sec) {
+            let msg = STATUS_MESSAGES[0][1];
+            for (const [t, m] of STATUS_MESSAGES) {
+                if (sec >= t) msg = m;
+            }
+            return msg;
+        }
+
+        // Tick elapsed time and update status label
+        const ticker = setInterval(() => {
+            elapsed++;
+            document.getElementById("status-text").textContent = getStatusMessage(elapsed);
+        }, 1000);
+
+        // Poll the backend
+        async function poll() {
+            try {
+                const resp = await fetch(STATUS_URL);
+                const data = await resp.json();
+
+                if (data.status === "done") {
+                    clearInterval(ticker);
+                    document.getElementById("status-text").textContent = "Done! Loading results…";
+                    window.location.href = RESULTS_URL;
+                    return;
+                }
+
+                if (data.status === "error") {
+                    clearInterval(ticker);
+                    document.getElementById("spinner").style.display = "none";
+                    document.getElementById("progress-bar").style.display = "none";
+                    const errBox = document.getElementById("error-box");
+                    errBox.textContent = "Scan failed: " + (data.error || "Unknown error.");
+                    errBox.classList.add("visible");
+                    document.getElementById("btn-home").classList.add("visible");
+                    document.getElementById("status-text").textContent = "Something went wrong.";
+                    return;
+                }
+
+                // Still running — poll again in 2 s
+                setTimeout(poll, 2000);
+            } catch (err) {
+                // Network error — retry
+                setTimeout(poll, 3000);
+            }
+        }
+
+        // Start polling after a short initial delay
+        setTimeout(poll, 2000);
+    </script>
+</body>
+</html>
