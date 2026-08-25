@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 from gmail_client import GmailClient, SUBSCRIPTION_QUERIES
-from filters import is_likely_subscription, EXCLUDE_MARKERS
+from filters import is_likely_subscription, EXCLUDE_MARKERS, PRICE_HINT_RE
 from parser import extract_price, extract_dates, extract_status, extract_provider
 from normalize import normalize_provider
 from llm_extractor import classify_and_extract
@@ -153,9 +153,16 @@ def _process_single_message(item) -> Row | None:
     snippet = msg.get("snippet", "")
     effective_body = body if body else snippet
 
-    # Fast pre-filtering: Skip obvious cancellations, trials, newsletters, or marketing offers
+    # Fast pre-filtering: Skip obvious cancellations, trials, newsletters, or marketing offers.
+    # These cheap regex/string checks run before any LLM call so most emails
+    # are rejected in microseconds.
     full_lower = f"{subject} {snippet} {effective_body}".lower()
     if any(marker in full_lower for marker in EXCLUDE_MARKERS):
+        return None
+
+    # Cheap price check — if there's no currency symbol or amount anywhere,
+    # skip the LLM call entirely (saves ~1-2s per message).
+    if not PRICE_HINT_RE.search(full_lower):
         return None
 
     # Primary extraction using Gemini LLM
@@ -253,7 +260,7 @@ def run_pipeline(
     fetched_messages = list(client.get_messages_batch(all_msg_ids))
     print(f"[llm_pipeline] Fetched {len(fetched_messages)} messages. Processing concurrently...")
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=15) as executor:
         for row in executor.map(_process_single_message, fetched_messages):
             if row is not None:
                 rows.append(row)

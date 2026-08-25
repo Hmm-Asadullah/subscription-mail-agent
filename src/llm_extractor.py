@@ -103,7 +103,9 @@ def classify_and_extract(subject: str, sender: str, body: str) -> dict | None:
     Tries primary model and falls back to alternate flash models if needed.
     Returns a normalized dict or None if LLM is unavailable.
     """
-    truncated_body = body[:2500] if body else ""
+    # Billing info always appears in the first ~1200 chars of a receipt.
+    # Sending less text meaningfully reduces per-call LLM latency.
+    truncated_body = body[:1200] if body else ""
     prompt_content = f"From: {sender}\nSubject: {subject}\n\nBody:\n{truncated_body}"
 
     # Try models in fallback order
