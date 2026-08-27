@@ -78,6 +78,7 @@ class TestLLMPipeline(unittest.TestCase):
         self.assertEqual(merged[0].provider, "Netflix")
         self.assertEqual(merged[0].amount, 19.99)
         self.assertEqual(merged[0].start_date, "2025-01-01")
+        self.assertGreaterEqual(merged[0].months_active, 1)
 
     def test_llm_classification_live(self):
         subject = "Your Spotify Premium renewal receipt"

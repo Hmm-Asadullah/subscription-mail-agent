@@ -44,6 +44,7 @@ class Row:
     status: str
     source_email_subject: str
     source_email_date: str
+    months_active: int = 1
 
 
 def get_body_text(payload) -> str:
@@ -100,6 +101,39 @@ def _parse_email_date(date_str: str):
         return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
 
 
+def calculate_months_active(start_date_str: str, fallback_date_str: str = "") -> int:
+    from dateutil import parser as dateparser
+
+    dt = None
+    for s in [start_date_str, fallback_date_str]:
+        if not s:
+            continue
+        try:
+            dt = dateparser.parse(str(s), fuzzy=True)
+            if dt:
+                break
+        except Exception:
+            continue
+
+    if not dt:
+        return 1
+
+    try:
+        import datetime
+        start_d = dt.date() if hasattr(dt, "date") else dt
+        today = datetime.date.today()
+        if start_d > today:
+            return 1
+        months = (today.year - start_d.year) * 12 + (today.month - start_d.month)
+        if today.day >= start_d.day:
+            months_count = months + 1
+        else:
+            months_count = max(1, months)
+        return max(1, months_count)
+    except Exception:
+        return 1
+
+
 def merge_to_current_subscriptions(rows: list) -> list:
     """
     Collapses multiple emails from the same provider into a single row
@@ -123,9 +157,12 @@ def merge_to_current_subscriptions(rows: list) -> list:
         if latest.amount <= 0.0:
             continue  # drop non-paid, $0, or trial notices
 
+        start_d = earliest.start_date or earliest.source_email_date
+        months_running = calculate_months_active(start_d, earliest.source_email_date)
+
         merged.append(Row(
             provider=provider,
-            start_date=earliest.start_date or earliest.source_email_date,
+            start_date=start_d,
             end_date=latest.end_date or latest.source_email_date,
             amount=latest.amount,
             currency=latest.currency if latest.currency else "USD",
@@ -133,9 +170,11 @@ def merge_to_current_subscriptions(rows: list) -> list:
             status="active",
             source_email_subject=latest.source_email_subject,
             source_email_date=latest.source_email_date,
+            months_active=months_running,
         ))
 
     return merged
+
 
 
 def run_pipeline(

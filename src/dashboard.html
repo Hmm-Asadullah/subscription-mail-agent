@@ -83,6 +83,7 @@
                         <th>Provider</th>
                         <th>Amount</th>
                         <th>Status</th>
+                        <th>Duration Running</th>
                         <th>First Seen</th>
                         <th>Last Seen</th>
                         <th>Subject</th>
@@ -94,6 +95,7 @@
                         <td>{{ row.provider }}</td>
                         <td>{{ row.amount }} {{ row.currency }}</td>
                         <td class="status-{{ row.status }}">{{ row.status }}</td>
+                        <td><strong>{{ row.months_active }}</strong> month{% if row.months_active != 1 %}s{% endif %}</td>
                         <td>{{ row.start_date }}</td>
                         <td>{{ row.end_date }}</td>
                         <td>{{ row.source_email_subject }}</td>
