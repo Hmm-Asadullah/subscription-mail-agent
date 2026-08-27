@@ -31,36 +31,38 @@ client = genai.Client(api_key=API_KEY)
 
 # Model configuration with fallback list in case of temporary provider spike/deprecation
 DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
-FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
+FALLBACK_MODELS = [DEFAULT_MODEL, "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 SYSTEM_PROMPT = """You are a strict and precise email classifier and data extractor for active paid recurring subscriptions.
 
 Your goal is to ONLY identify emails confirming that the user has been BILLED or CHARGED for an ACTIVE RECURRING SUBSCRIPTION (monthly, yearly, or weekly).
 
-CRITICAL DISTINCTION: SUBSCRIPTION BILLING vs. GENERIC PAYMENT EMAILS:
+CRITICAL DISTINCTION: RECURRING SUBSCRIPTION vs. ONE-TIME PURCHASES & INVOICES:
 1. ONLY return "is_subscription": true when ALL of the following are true:
-   - The email is a billing confirmation, receipt, or invoice from an automated subscription platform (SaaS software, cloud infrastructure, streaming, AI tool, hosting, domain, or recurring membership).
-   - The charge is RECURRING — there is evidence of a monthly, yearly, or weekly billing cadence (e.g., "monthly plan", "billed every month", "annual subscription", "next billing date", "renewal date").
+   - The email is an automated billing confirmation, renewal notice, or SaaS receipt for an ongoing RECURRING service (SaaS software, cloud compute/storage, AI tool, streaming service, domain/hosting with auto-renewal, or ongoing membership).
+   - The charge is RECURRING — there is clear evidence of a continuous subscription cycle (e.g. "monthly plan", "billed monthly", "annual subscription", "next renewal date", "recurring charge", "billing cycle").
    - The amount charged is greater than zero.
-   - The sender is the service provider itself — NOT a bank, payment gateway, or peer-to-peer payment app.
+   - The sender is the service provider itself — NOT a bank, payment processor notification, or P2P transfer.
 
 2. ALWAYS return "is_subscription": false for:
-   - GENERIC PAYMENT CONFIRMATIONS: Emails from PayPal, Stripe, bank, Wise, Western Union, JazzCash, EasyPaisa, Payoneer, Razorpay, or any payment processor confirming a money transfer, withdrawal, payment sent/received, or top-up (e.g., "You sent $50", "Payment received from John", "Your transfer is complete", "Transaction confirmed").
-   - BANK / WALLET NOTIFICATIONS: Account statements, bank alerts, credit card payment reminders, wallet top-ups, balance updates, or transaction alerts.
-   - P2P / FREELANCE PAYMENTS: Payments sent or received between individuals (e.g., "Ahmed sent you $200", "Payment from client", "Upwork payment released").
-   - PAYMENT REMINDERS / DUE NOTICES: Emails reminding you a payment is due or overdue, not confirming it was already charged.
-   - CLIENT / FREELANCE / ONE-OFF INVOICES: Invoices for freelance work, consulting, custom projects, milestone payments, hourly labor, or services rendered.
-   - ONE-TIME PURCHASES: Single retail orders, food delivery, hardware, electronics, travel/hotel/ticket bookings.
-   - FREE TRIALS, TRIAL ENDINGS, CANCELLATION NOTICES, EXPIRATION NOTICES, DEACTIVATION EMAILS.
-   - MARKETING EMAILS: Discount offers, upgrade prompts, promotional deals, newsletters (e.g., "50% off today only", "Deal ends tonight", "Use code SAVE20").
+   - ONE-TIME DIGITAL ASSETS & TEMPLATES: Purchases of website templates, Notion templates, Framer/Webflow templates, WordPress/Shopify themes, Figma UI kits, icon packs, font licenses, 3D models, graphics, digital downloads, e-books, online courses, tutorials (e.g., purchases from ThemeForest, Envato, Creative Market, Gumroad, UI8, Etsy, Lemon Squeezy, etc.).
+   - ONE-TIME SOFTWARE LICENSES & LIFETIME DEALS: Lifetime access (LTD), single standard licenses, extended licenses, one-off plugin/app purchases, pay-once software.
+   - FREELANCE / CONSULTING / CONTRACTOR INVOICES: Invoices for custom dev/design work, hourly labor, milestone payments, project retainers, consulting fees, services rendered (e.g., Upwork, Fiverr, contractor invoices, custom Stripe/PayPal invoices).
+   - GENERIC RECEIPTS / INVOICES: An email having the word "Invoice", "Tax Invoice", "Receipt", or "Order Confirmation" by itself does NOT mean it is a subscription. If there is no recurring plan or renewal cadence, it is a one-time purchase.
+   - PHYSICAL GOODS & RETAIL: Electronics, hardware, apparel, food delivery, airline/hotel tickets, ride-sharing.
+   - GENERIC PAYMENT PROCESSOR NOTIFICATIONS: PayPal, Stripe, bank, Wise, JazzCash, EasyPaisa, Payoneer, Razorpay emails stating "You sent a payment", "Payment received", "Transfer completed".
+   - BANK & WALLET ALERTS: Credit card statements, account balance alerts, wallet top-ups.
+   - PAYMENT REMINDERS & DUE NOTICES: Invoices that are due or unpaid (not yet charged).
+   - FREE TRIALS, EXPIRATIONS, CANCELLATION CONFIRMATIONS, DEACTIVATIONS.
+   - MARKETING EMAILS & PROMOS: Upgrade deals, discount codes, newsletters.
    - $0.00 / Free tier notifications.
 
-3. KEY TEST — ask yourself:
-   - "Did this email confirm a recurring subscription charge that will repeat automatically?" → true
-   - "Is this a one-time payment, a bank transfer, a freelance payment, or just a payment notification?" → false
+3. KEY TEST:
+   - "Is this an automated recurring subscription that will charge again next month/year?" → true
+   - "Is this a one-time template/theme purchase, digital download, freelance invoice, or one-off payment?" → false
 
 4. STATUS:
-   - Use "active" ONLY for confirmed, currently-paid, ongoing subscriptions.
+   - Use "active" ONLY for confirmed, currently-paid, ongoing recurring subscriptions.
    - Anything else → "is_subscription": false.
 
 Respond with ONLY a JSON object matching this exact schema:
@@ -104,8 +106,6 @@ def classify_and_extract(subject: str, sender: str, body: str) -> dict | None:
     Returns a normalized dict or None if LLM is unavailable.
     """
     # Billing info is usually in the first ~2000 chars of a receipt.
-    # 2000 is a safe balance between speed and not missing amounts that
-    # appear after a long header or intro paragraph (e.g. AWS, Google Cloud).
     truncated_body = body[:2000] if body else ""
     prompt_content = f"From: {sender}\nSubject: {subject}\n\nBody:\n{truncated_body}"
 
@@ -117,26 +117,32 @@ def classify_and_extract(subject: str, sender: str, body: str) -> dict | None:
 
     last_error = None
     for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_content,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    max_output_tokens=1000,
-                ),
-            )
-            if response and response.text:
-                data = _parse_json_response(response.text)
-                if isinstance(data, dict):
-                    # Sanitize status to lowercase
-                    if data.get("status"):
-                        data["status"] = str(data["status"]).strip().lower()
-                    return data
-        except Exception as e:
-            last_error = e
-            continue
+        for attempt in range(2):  # Quick retry on rate limit
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt_content,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        response_mime_type="application/json",
+                        max_output_tokens=1000,
+                    ),
+                )
+                if response and response.text:
+                    data = _parse_json_response(response.text)
+                    if isinstance(data, dict):
+                        # Sanitize status to lowercase
+                        if data.get("status"):
+                            data["status"] = str(data["status"]).strip().lower()
+                        return data
+            except Exception as e:
+                last_error = e
+                # If rate limited (429), brief pause before retry/fallback
+                if "429" in str(e) or "ResourceExhausted" in str(e):
+                    import time
+                    time.sleep(1.0)
+                    continue
+                break
 
     print(f"[llm_extractor] Failed to classify email ({ascii(subject)}): {last_error}")
     return None

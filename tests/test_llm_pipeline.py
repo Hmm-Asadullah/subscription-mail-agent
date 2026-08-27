@@ -168,7 +168,34 @@ class TestLLMPipeline(unittest.TestCase):
         self.assertAlmostEqual(float(res.get("amount") or 0), 4.00)
 
 
-    def test_heuristic_filter_rejects_promos(self):
+    def test_rejection_of_one_time_template_and_digital_purchases(self):
+        # 1. ThemeForest / Envato website template purchase
+        res1 = classify_and_extract(
+            "ThemeForest: Purchase Confirmation for Agency Next.js Template",
+            "Envato Market <sales@envato.com>",
+            "Thank you for purchasing Agency Next.js Website Template. Total: $29.00 USD. Single Standard License. Download your item from your downloads page."
+        )
+        self.assertIsNotNone(res1)
+        self.assertFalse(res1.get("is_subscription"))
+
+        # 2. Gumroad Framer UI kit / template
+        res2 = classify_and_extract(
+            "Receipt for Framer UI Kit & Components",
+            "Gumroad <receipts@gumroad.com>",
+            "You purchased Framer UI Kit by Designer for $49.00 USD. One-time payment. Lifetime access to updates. Access your content here."
+        )
+        self.assertIsNotNone(res2)
+        self.assertFalse(res2.get("is_subscription"))
+
+    def test_heuristic_filter_rejects_templates_and_promos(self):
+        # Website template purchase
+        self.assertFalse(is_likely_subscription(
+            "ThemeForest: Purchase Confirmation for Agency Next.js Template",
+            "Your website template purchase is complete",
+            "Thank you for purchasing Agency Next.js Website Template. Total: $29.00 USD. Single Standard License.",
+            "Envato Market <sales@envato.com>"
+        ))
+
         # LeetCode $40 off deal
         self.assertFalse(is_likely_subscription(
             "🔔 Deal Ends Today - $40 off Annual Premium",
@@ -184,6 +211,7 @@ class TestLLMPipeline(unittest.TestCase):
             "Don't let the clock run out on this deal. Pro is 50% off for a limited time only. [Get Pro]",
             "Grammarly <info@send.grammarly.com>"
         ))
+
 
 
 if __name__ == "__main__":

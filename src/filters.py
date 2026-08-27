@@ -18,9 +18,17 @@ EXCLUDE_MARKERS = {
     "subscription ended", "membership expired", "plan expired",
     "unsubscribe from this newsletter", "weekly digest",
     "manage your email preferences", "tips & tricks", "more clarity, more confidence",
+    # Freelance / Consulting / Contractor / One-off labor invoices:
     "milestone payment", "hours worked", "hourly rate", "project invoice",
     "consulting invoice", "freelance invoice", "statement of work",
-    "services rendered", "scope of work", "contract work",
+    "services rendered", "scope of work", "contract work", "contractor invoice",
+    # One-time digital assets, templates, UI kits, single licenses:
+    "template purchase", "website template", "notion template", "framer template",
+    "webflow template", "ui kit", "icon pack", "font license", "digital download",
+    "theme purchase", "single license", "standard license", "extended license",
+    "single commercial license", "lifetime access", "lifetime license", "lifetime plan",
+    "pay once", "one-time payment", "one-time purchase", "one-off payment",
+    "single purchase", "buy once",
     # Promotional / discount / marketing offer markers:
     "deal ends", "deal ends today", "black friday", "cyber monday",
     "use code", "promo code", "coupon code", "discount", "special offer",
@@ -42,15 +50,19 @@ STRONG_PAID_PHRASES = {
     "recurring payment confirmation", "subscription payment", "billed for your subscription",
     "payment for your subscription", "invoice for your subscription",
     "your subscription has renewed", "subscription invoice",
+    "monthly subscription", "annual subscription", "yearly subscription",
+    "billed monthly", "billed annually", "billed yearly", "recurring charge",
 }
 
-# Keywords indicating billing or subscription context
-BILLING_KEYWORDS = {
+# Strict recurring signals required when LLM is unavailable
+RECURRING_CUES = {
     "subscription renewed", "renewal confirmation", "recurring payment",
     "recurring billing", "billing cycle", "your plan renews",
-    "membership renewal", "payment confirmation", "payment received",
-    "invoice", "receipt", "billed", "confirmación de pago", "rechnung",
+    "membership renewal", "monthly subscription", "annual subscription",
+    "billed monthly", "billed annually", "per month", "/month",
+    "per year", "/year", "next billing date", "renewal date",
 }
+
 
 # Comprehensive price-hint regex. Intentionally broad — false positives
 # here just mean an extra LLM call; false negatives mean a missed subscription.
@@ -89,7 +101,7 @@ def is_likely_subscription(subject: str, snippet: str, body_text: str, sender: s
     text = f"{subject} {snippet} {body_text}".lower()
     sender_lower = (sender or "").lower()
 
-    # Drop immediately if negative/cancellation/trial/deactivation/promo phrases are found
+    # Drop immediately if negative/cancellation/trial/deactivation/one-time promo phrases are found
     if any(marker in text for marker in EXCLUDE_MARKERS):
         return False
 
@@ -98,13 +110,14 @@ def is_likely_subscription(subject: str, snippet: str, body_text: str, sender: s
     if not has_price:
         return False
 
-    # Must contain strong paid phrase or billing keyword confirming a charge/renewal
-    has_billing_kw = any(kw in text for kw in BILLING_KEYWORDS) or any(phrase in text for phrase in STRONG_PAID_PHRASES)
-    if not has_billing_kw:
+    # Must contain explicit recurring billing signals (e.g. monthly, annual, renewal, recurring charge)
+    # Generic "invoice" or "receipt" without recurring indicators is NOT a subscription.
+    has_recurring = any(kw in text for kw in RECURRING_CUES) or any(phrase in text for phrase in STRONG_PAID_PHRASES)
+    if not has_recurring:
         return False
 
     # Known provider with verified billing context
     if any(domain in sender_lower or domain in text for domain in PROVIDER_ALIASES):
         return True
 
-    return True
+    return True
