@@ -144,12 +144,67 @@ def calculate_months_active(start_date_str: str, fallback_date_str: str = "") ->
         return 1
 
 
+def is_subscription_currently_active(latest_row: Row) -> bool:
+    """
+    Determines if a subscription is CURRENTLY active based on recency.
+    Even if an old email was an active receipt/upgrade when sent, if no billing
+    receipt has arrived within the expected recurrence window (e.g. within 65 days
+    for monthly or 395 days for annual), the subscription has lapsed/expired.
+    """
+    from dateutil import parser as dateparser
+
+    # 1. If next renewal / period end date is in the future, it is definitely active
+    if latest_row.end_date:
+        try:
+            end_dt = dateparser.parse(str(latest_row.end_date), fuzzy=True)
+            if end_dt:
+                end_d = end_dt.date() if hasattr(end_dt, "date") else end_dt
+                today = datetime.date.today()
+                if end_d >= today:
+                    return True
+        except Exception:
+            pass
+
+    # 2. Check the most recent billing email date
+    latest_dt = None
+    for s in [latest_row.source_email_date, latest_row.end_date]:
+        if not s:
+            continue
+        try:
+            latest_dt = dateparser.parse(str(s), fuzzy=True)
+            if latest_dt:
+                break
+        except Exception:
+            continue
+
+    if not latest_dt:
+        return False
+
+    try:
+        latest_d = latest_dt.date() if hasattr(latest_dt, "date") else latest_dt
+        today = datetime.date.today()
+        days_ago = (today - latest_d).days
+
+        if days_ago <= 0:
+            return True
+
+        reason_lower = (latest_row.reason or "").lower()
+        subject_lower = (latest_row.source_email_subject or "").lower()
+        is_annual = any(w in reason_lower or w in subject_lower for w in ["year", "annual", "/yr", "yearly"])
+
+        # Allow up to 395 days (~13 months) for annual plans, or 65 days (~2 months) for monthly
+        max_allowed_days = 395 if is_annual else 65
+        return days_ago <= max_allowed_days
+    except Exception:
+        return True
+
+
 def merge_to_current_subscriptions(rows: list) -> list:
     """
     Collapses multiple emails from the same provider into a single row
     representing that subscription's CURRENT state.
     Strictly keeps ONLY currently ACTIVE subscriptions with a paid non-zero amount.
-    Calculates the total months the subscription has been running.
+    Filters out lapsed/expired subscriptions that haven't billed recently.
     """
     groups = defaultdict(list)
     for row in rows:
@@ -168,6 +223,10 @@ def merge_to_current_subscriptions(rows: list) -> list:
         if latest.amount <= 0.0:
             continue  # drop non-paid, $0, or trial notices
 
+        # Drop lapsed subscriptions where the last billing receipt is too old (e.g. from 2023)
+        if not is_subscription_currently_active(latest):
+            continue
+
         start_d = earliest.start_date or earliest.source_email_date
         months_running = calculate_months_active(start_d, earliest.source_email_date)
 
@@ -185,6 +244,7 @@ def merge_to_current_subscriptions(rows: list) -> list:
         ))
 
     return merged
+
 
 
 

@@ -37,6 +37,10 @@ class TestLLMPipeline(unittest.TestCase):
         self.assertIn("$20", extracted)
 
     def test_merge_to_current_subscriptions(self):
+        import datetime
+        recent_date_str = datetime.date.today().strftime("%Y-%m-%d")
+        recent_email_date = datetime.datetime.now(datetime.timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+
         rows = [
             Row(
                 provider="Netflix",
@@ -51,15 +55,28 @@ class TestLLMPipeline(unittest.TestCase):
             ),
             Row(
                 provider="Netflix",
-                start_date="2026-01-01",
-                end_date="2026-01-01",
+                start_date="2025-01-01",
+                end_date=recent_date_str,
                 amount=19.99,
                 currency="USD",
                 reason="streaming",
                 status="active",
-                source_email_subject="Netflix Receipt Jan 2026",
-                source_email_date="Thu, 1 Jan 2026 10:00:00 +0000",
+                source_email_subject="Netflix Receipt Current",
+                source_email_date=recent_email_date,
             ),
+            # Old lapsed subscription from 2023 (no cancellation email, but lapsed)
+            Row(
+                provider="Upwork",
+                start_date="2020-11-13",
+                end_date="2023-07-12",
+                amount=20.00,
+                currency="USD",
+                reason="freelance platform",
+                status="active",
+                source_email_subject="Nice job upgrading your membership!",
+                source_email_date="Wed, 12 Jul 2023 07:21:11 +0000",
+            ),
+            # Explicitly canceled subscription
             Row(
                 provider="Gym Membership",
                 start_date="2025-06-01",
@@ -74,11 +91,13 @@ class TestLLMPipeline(unittest.TestCase):
         ]
 
         merged = merge_to_current_subscriptions(rows)
+        # Should only include active Netflix; Upwork (lapsed 2023) and Gym (canceled) dropped
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].provider, "Netflix")
         self.assertEqual(merged[0].amount, 19.99)
         self.assertEqual(merged[0].start_date, "2025-01-01")
         self.assertGreaterEqual(merged[0].months_active, 1)
+
 
     def test_llm_classification_live(self):
         subject = "Your Spotify Premium renewal receipt"
